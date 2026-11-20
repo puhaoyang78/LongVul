@@ -6,12 +6,12 @@ import re
 
 from dataset import BUDGET
 
-METHODS = ("head", "head_tail", "compact")
+METHODS = ("head", "head_tail", "uniform4", "compact")
 INDENT = re.compile(r"^[ \t]+", re.MULTILINE)
 SPLICE = re.compile(r"\\[ \t]*\r?\n")
 
 
-def compact_positions(code, ids, offsets):
+def line_layout(code, ids, offsets):
     # Preserve a separator on each indented line. Raw literals and line splices
     # can make physical indentation significant inside C/C++ tokens.
     keep = list(range(len(ids)))
@@ -26,7 +26,7 @@ def compact_positions(code, ids, offsets):
         keep = [i for i in keep if i not in discard]
     n = len(keep)
     if n <= BUDGET:
-        return keep
+        return keep, [0, n]
 
     # Form physical-line units. Divide oversized lines into pieces small enough
     # to compete for a window, preferring whitespace boundaries.
@@ -46,13 +46,21 @@ def compact_positions(code, ids, offsets):
     if boundaries[-1] != n:
         boundaries.append(n)
 
+    return keep, boundaries
+
+
+def four_windows(ids, keep, boundaries, *, uniform):
+    n = len(keep)
+    if n <= BUDGET:
+        return keep
     # Divide by position for coverage, score contiguous runs by within-function
     # bigram rarity, and keep original order. Reserve one EOS per possible gap.
-    seq = [ids[i] for i in keep]
-    grams = list(zip([-1, *seq[:-1]], seq))
-    counts = Counter(grams)
-    weights = {g: c ** -0.5 for g, c in counts.items()}
-    prefix = [0., *accumulate(weights[g] for g in grams)]
+    if not uniform:
+        seq = [ids[i] for i in keep]
+        grams = list(zip([-1, *seq[:-1]], seq))
+        counts = Counter(grams)
+        weights = {g: c ** -0.5 for g, c in counts.items()}
+        prefix = [0., *accumulate(weights[g] for g in grams)]
     edges = [0]
     for k in range(1, 4):
         p = bisect_left(boundaries, n * k / 4)
@@ -62,11 +70,18 @@ def compact_positions(code, ids, offsets):
     previous_end = 0
     for k, (lo, hi) in enumerate(zip(edges, edges[1:])):
         quota = (BUDGET - 3) * (k + 1) // 4 - (BUDGET - 3) * k // 4
-        best_value = -1.
+        center = (boundaries[lo] + boundaries[hi]) / 2
+        best_value = None
         for start in boundaries[lo:hi]:
             end = boundaries[bisect_right(boundaries, start + quota, lo, hi + 1) - 1]
-            value = prefix[end] - prefix[start]
-            if value > best_value:
+            if uniform:
+                # Choose the line-aligned window that covers most of the
+                # central quota, then break ties by proximity to its center.
+                overlap = min(end, center + quota / 2) - max(start, center - quota / 2)
+                value = (overlap, -abs((start + end) / 2 - center))
+            else:
+                value = prefix[end] - prefix[start]
+            if best_value is None or value > best_value:
                 best_value, a, b = value, start, end
         if positions and previous_end != a:
             positions.append(None)
@@ -82,9 +97,10 @@ def select(method, code, ids, offsets=None):
     if method == "head_tail":
         half = BUDGET // 2
         return [*range(half), *range(n - (BUDGET - half), n)]
-    if method != "compact":
+    if method not in ("uniform4", "compact"):
         raise ValueError(method)
-    return compact_positions(code, ids, offsets)
+    keep, boundaries = line_layout(code, ids, offsets)
+    return four_windows(ids, keep, boundaries, uniform=method == "uniform4")
 
 
 def model_ids(ids, positions, tok):

@@ -1,7 +1,5 @@
 """One-epoch CodeBERT comparison on the published natural PrimeVul splits."""
 import argparse
-import csv
-import gzip
 import platform
 import sys
 from time import perf_counter
@@ -11,8 +9,8 @@ import torch
 import transformers
 from transformers import get_linear_schedule_with_warmup, set_seed
 
-from compression import METHODS, model_ids, select
-from dataset import BUDGET, DATA, MAX_LENGTH, MODEL, RESULTS, ROOT, SPLITS, batches, rows, tokenizer, write
+from compression import METHODS
+from dataset import BUDGET, DATA, MAX_LENGTH, MODEL, RESULTS, ROOT, SPLITS, batches, rows, tokenizer, write, encode_rows, save_predictions
 from rgcl.config import ADAM_EPSILON, BATCH_SIZE, LEARNING_RATE, MAX_GRAD_NORM, WARMUP_FRACTION
 from rgcl.data import prime_source_rows
 from rgcl.model import build_model
@@ -32,23 +30,7 @@ def prepare(split, method, tok):
     split_rows = [dict(idx=r["idx"], label=r["target"], func=r["func"]) for r in source]
     if split == "train":
         split_rows = balanced_subset(split_rows, TRAIN_SIZE, SEED)
-    ids = np.full((len(split_rows), MAX_LENGTH), tok.pad_token_id, dtype=np.int32)
-    n = np.empty(len(ids), dtype=np.int32)
-    original = np.empty_like(n)
-    labels = [r["label"] for r in split_rows]
-    keys = [r["idx"] for r in split_rows]
-    i = 0
-    for batch in batches(split_rows, 64):
-        enc = tok([r["func"] for r in batch], add_special_tokens=False, verbose=False,
-                  return_attention_mask=False, return_offsets_mapping=method == "compact")
-        offsets = enc.get("offset_mapping", [None] * len(batch))
-        for row, source, mapping in zip(batch, enc["input_ids"], offsets):
-            pos = select(method, row["func"], source, mapping)
-            view = model_ids(source, pos, tok)
-            original[i], n[i] = len(source), len(view)
-            ids[i, :len(view)] = view
-            i += 1
-    return ids, n, original, labels, keys
+    return encode_rows(split_rows, method, tok)
 
 
 def batch_tensors(data, idx, device):
@@ -91,15 +73,6 @@ def predict(model, data, device):
             logits = model(x, mask, None, None)["logits"]
         scores[idx] = logits.float().sigmoid().cpu().numpy()
     return scores.tolist()
-
-
-def save_predictions(method, split, data, scores):
-    path = RESULTS / f"{method}_{split}.csv.gz"
-    with gzip.open(path.with_suffix(".tmp"), "wt") as stream:
-        writer = csv.writer(stream)
-        writer.writerow(("idx", "target", "original_bpe", "input_length", "probability"))
-        writer.writerows(zip(data[4], data[3], data[2].tolist(), data[1].tolist(), scores))
-    path.with_suffix(".tmp").replace(path)
 
 
 def run(method):
@@ -150,7 +123,7 @@ def run(method):
                 bound = np.float32(threshold)
                 result["pairs"] = dict(count=len(before), both_correct=int(((before >= bound) & (after < bound)).sum()),
                                        ranked=int((before > after).sum()), ties=int((before == after).sum()))
-            save_predictions(method, split, data, scores)
+            save_predictions(RESULTS / f"{method}_{split}.csv.gz", data, scores)
         out["seconds"]["wall_to_date"] = perf_counter() - begin
         write(f"{method}.json", out)
         print(method, split, out["seconds"], result.get("metrics", {}).get("mcc"), flush=True)

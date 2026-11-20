@@ -50,6 +50,7 @@ def audit():
     for split in SPLITS:
         begin = perf_counter()
         rows = prime_source_rows(DATA.parent, split)
+        locality = Counter()
         counts = {m: defaultdict(Counter) for m in METHODS}
         for pair in range(0, len(rows), 2):
             left, right = rows[pair:pair + 2]
@@ -61,6 +62,10 @@ def audit():
             ids, offsets = enc["input_ids"], enc["offset_mapping"]
             views = {m: [select(m, *args) for args in zip(codes, ids, offsets)] for m in METHODS}
             edits = [bpe_ranges(o, spans) for o, spans in zip(offsets, edit_spans(*codes))]
+            for source, changes in zip(ids, edits):
+                if len(source) > BUDGET:
+                    occupied = {min(3, 4 * a // len(source)) for a, _ in changes}
+                    locality[f"{len(occupied)}_quarters"] += 1
             group = "long" if max(map(len, ids)) > BUDGET else "short"
             head_different = None
             for m, sides in views.items():
@@ -95,7 +100,7 @@ def audit():
                 c["different_without_visible_edit"] += bool(different and not evidence)
                 for name in ("all", group):
                     counts[m][name].update(c)
-        write(f"offline_{split}.json", dict(seconds=perf_counter()-begin, methods=counts))
+        write(f"offline_{split}.json", dict(seconds=perf_counter()-begin, methods=counts, long_side_edit_quarters=locality))
         print(split, {m: dict(c["long"]) for m, c in counts.items()}, flush=True)
 
 
