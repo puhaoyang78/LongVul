@@ -17,7 +17,6 @@ from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
 
 sys.path.insert(0, str(UPSTREAM / "SEA"))
-from two_stage_utils import sliding_window
 
 SCOUT_LENGTH = 512
 SCOUT_OVERLAP = 256
@@ -34,6 +33,8 @@ COUNTERS = ("observations", "covered_bpe_total", "fully_covered_observations",
 
 
 def sea_input(tokenizer, ids):
+    from two_stage_utils import sliding_window
+
     n = len(ids)
     head = (0, min(n, SEA_LENGTH - 2))
     windows = [(start, start + len(piece)) for start, piece in sliding_window(range(n), SEA_WIDTH, SEA_STEP)]
