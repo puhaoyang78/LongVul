@@ -55,7 +55,14 @@ def line_layout(code, ids, offsets):
     return keep, boundaries
 
 
-def choose_candidates(boundaries, *, alternatives):
+def aligned_windows(boundaries, lo, hi, center, quota):
+    for start in boundaries[lo:hi]:
+        end = boundaries[bisect_right(boundaries, start + quota, lo, hi + 1) - 1]
+        overlap = min(end, center + quota / 2) - max(start, center - quota / 2)
+        yield (start, end), (overlap, -abs((start + end) / 2 - center))
+
+
+def choose_candidates(boundaries, *, alternatives, quotas=QUOTAS):
     n = boundaries[-1]
     edges = [0]
     for k in range(1, REGIONS):
@@ -63,19 +70,16 @@ def choose_candidates(boundaries, *, alternatives):
         edges.append(min((p - 1, p), key=lambda t: abs(boundaries[t] - n * k / REGIONS)))
     edges.append(len(boundaries) - 1)
     windows, limits = [], []
-    for (lo, hi), quota in zip(zip(edges, edges[1:]), QUOTAS, strict=True):
+    for (lo, hi), quota in zip(zip(edges, edges[1:]), quotas, strict=True):
         left, right = boundaries[lo], boundaries[hi]
         center = (left + right) / 2
         legal = []
         best, best_value = None, None
-        for start in boundaries[lo:hi]:
-            end = boundaries[bisect_right(boundaries, start + quota, lo, hi + 1) - 1]
-            legal.append((start, end))
-            # Preserve the original Uniform-4 score and its first-window tie break.
-            overlap = min(end, center + quota / 2) - max(start, center - quota / 2)
-            value = (overlap, -abs((start + end) / 2 - center))
+        for span, value in aligned_windows(boundaries, lo, hi, center, quota):
+            if alternatives:
+                legal.append(span)
             if best_value is None or value > best_value:
-                best, best_value = (start, end), value
+                best, best_value = span, value
         if best is None or best[0] >= best[1]:
             raise ValueError(f"no nonempty window in region {left}:{right}")
         chosen = [best]  # slot 0 stays the Uniform-4 window
@@ -94,6 +98,34 @@ def choose_candidates(boundaries, *, alternatives):
     return windows, limits
 
 
+def pack_fixed(ids, keep, spans, tokenizer):
+    fixed_ids = [tokenizer.cls_token_id]
+    fixed_positions, fixed_parts = [-1], [0]
+    previous_end = None
+    for part, (start, end) in enumerate(spans, 1):
+        if start == end:
+            continue
+        positions = keep[start:end]
+        if previous_end is not None and previous_end != start:
+            fixed_ids.append(tokenizer.sep_token_id)
+            fixed_positions.append(-1)
+            fixed_parts.append(0)
+        fixed_ids.extend(ids[pos] for pos in positions)
+        fixed_positions.extend(positions)
+        fixed_parts.extend([part] * len(positions))
+        previous_end = end
+    fixed_ids.append(tokenizer.sep_token_id)
+    fixed_positions.append(-1)
+    fixed_parts.append(0)
+    length = len(fixed_ids)
+    if length > MAX_LENGTH:
+        raise ValueError("packed input exceeds the 512-position budget")
+    pad = MAX_LENGTH - length
+    fixed = np.array([fixed_ids + [tokenizer.pad_token_id]*pad,
+                      fixed_positions + [-1]*pad, fixed_parts + [0]*pad], dtype=np.int32)
+    return torch.from_numpy(fixed), length
+
+
 def prepare_function(code, ids, offsets, tokenizer, *, alternatives):
     raw = len(ids)
     if raw <= BUDGET:
@@ -105,8 +137,6 @@ def prepare_function(code, ids, offsets, tokenizer, *, alternatives):
     else:
         windows, limits = choose_candidates(boundaries, alternatives=alternatives)
 
-    fixed_ids = [tokenizer.cls_token_id]
-    fixed_positions, fixed_parts = [-1], [0]
     uniform = np.full((REGIONS, 4), -1, dtype=np.int32)
     specs = np.full((REGIONS, MAX_CANDIDATES, 4), -1, dtype=np.int32)
     bank = originals = None
@@ -114,7 +144,6 @@ def prepare_function(code, ids, offsets, tokenizer, *, alternatives):
         shape = (REGIONS, MAX_CANDIDATES, WIDTH)
         bank = np.full(shape, tokenizer.pad_token_id, dtype=np.int32)
         originals = np.full(shape, -1, dtype=np.int32)
-    previous_end = None
     for k, candidates in enumerate(windows):
         for j, (start, end) in enumerate(candidates):
             positions = keep[start:end]
@@ -127,31 +156,15 @@ def prepare_function(code, ids, offsets, tokenizer, *, alternatives):
                 originals[k, j, :len(positions)] = positions
             if j == 0:
                 uniform[k] = specs[k, j]
-                if previous_end is not None and previous_end != start:
-                    fixed_ids.append(tokenizer.sep_token_id)
-                    fixed_positions.append(-1)
-                    fixed_parts.append(0)
-                fixed_ids.extend(selected_ids)
-                fixed_positions.extend(positions)
-                fixed_parts.extend([k+1] * len(positions))
-                previous_end = end
-    fixed_ids.append(tokenizer.sep_token_id)
-    fixed_positions.append(-1)
-    fixed_parts.append(0)
-    length = len(fixed_ids)
-    if length > MAX_LENGTH:
-        raise ValueError("packed input exceeds the 512-position budget")
-    pad = MAX_LENGTH - length
-    fixed = np.array([fixed_ids + [tokenizer.pad_token_id]*pad,
-                      fixed_positions + [-1]*pad, fixed_parts + [0]*pad], dtype=np.int32)
-    return dict(fixed=torch.from_numpy(fixed), length=length, raw=raw, uniform=torch.from_numpy(uniform),
+    fixed, length = pack_fixed(ids, keep, [candidates[0] for candidates in windows], tokenizer)
+    return dict(fixed=fixed, length=length, raw=raw, uniform=torch.from_numpy(uniform),
                 bank=None if bank is None else (torch.from_numpy(bank), torch.from_numpy(originals),
                                                  torch.from_numpy(specs)),
                 limits=limits, candidate_counts=(specs[..., 0] >= 0).sum(1).tolist())
 
 
 class CompactData(Dataset):
-    def __init__(self, split, tokenizer, *, alternatives):
+    def __init__(self, split, tokenizer, *, alternatives=False, prepare=None):
         rows = prime_source_rows(DATA, split)
         self.targets = torch.tensor([r["target"] for r in rows])
         self.metadata, self.examples = [], []
@@ -160,7 +173,10 @@ class CompactData(Dataset):
             encoding = tokenizer([r["func"] for r in batch], add_special_tokens=False,
                                  return_offsets_mapping=True, return_attention_mask=False, verbose=False)
             for row, ids, offsets in zip(batch, encoding.input_ids, encoding.offset_mapping, strict=True):
-                example = prepare_function(row["func"], ids, offsets, tokenizer, alternatives=alternatives)
+                if prepare is None:
+                    example = prepare_function(row["func"], ids, offsets, tokenizer, alternatives=alternatives)
+                else:
+                    example = prepare(row["func"], ids, offsets, tokenizer)
                 example["label"] = row["target"]
                 self.examples.append(example)
                 self.metadata.append(dict(idx=row["idx"], sample_key=row["sample_key"],

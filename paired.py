@@ -1,7 +1,10 @@
-"""Train the compaction ablations with LongVul's paired-release BCE protocol."""
+"""Train fixed-budget classifiers with LongVul's paired-release BCE protocol."""
 import argparse
 import csv
+from functools import partial
+import gc
 import gzip
+from importlib.metadata import version
 import json
 import math
 import platform
@@ -13,11 +16,13 @@ import transformers
 from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup, set_seed
 
-from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, collate
+import context_selection as context
+from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, collate, prepare_function
 from csp_model import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, CompactionClassifier, pack
-from window_inputs import BASE, ROOT, grouped_metrics
+from window_inputs import BASE, DATA, ROOT, grouped_metrics
 from rgcl.artifacts import write_json
-from rgcl.config import ADAM_EPSILON, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, WARMUP_FRACTION
+from rgcl.config import ADAM_EPSILON, BACKBONES, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, WARMUP_FRACTION
+from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
 from rgcl.model import build_model, load_tokenizer
 from rgcl.training import LOSVERAdamW, load_training_state, restore_rng, save_training_state
@@ -26,11 +31,15 @@ SEED = 42
 METHODS = {"ab": (True, False), "ac": (False, True), "abc": (True, True)}
 RESULTS = ROOT / "results" / "csp"
 WEIGHTS = ROOT / "checkpoints" / "csp"
+UNIX_BASE = BASE.with_name("unixcoder-base-nine")
+UNIX_RESULTS = ROOT / "results" / "unixcoder_context"
+UNIX_WEIGHTS = ROOT / "checkpoints" / "unixcoder_context"
 
 
 def make_model(tokenizer, method):
-    select_windows, use_positions = METHODS[method]
-    base = build_model("codebert", "plm_classifier", model_source=BASE)
+    select_windows, use_positions = METHODS.get(method, (False, False))
+    backbone, source = ("unixcoder", UNIX_BASE) if method in context.METHODS else ("codebert", BASE)
+    base = build_model(backbone, "plm_classifier", model_source=source)
     return CompactionClassifier(base, tokenizer, select_windows=select_windows, use_positions=use_positions).cuda()
 
 
@@ -180,24 +189,81 @@ def smoke(tokenizer):
     print("CSP smoke passed", result["functions"][0], norms, round(result["peak_allocated_bytes"]/2**30, 3), flush=True)
 
 
-def measure_data(split, tokenizer, alternatives):
+def smoke_context(tokenizer):
+    rows = prime_source_rows(DATA, "train")
+    longest, shortest = (None, None, None), (None, None, None)
+    for start in range(0, len(rows), 32):
+        block = rows[start:start+32]
+        batch = tokenizer([row["func"] for row in block], add_special_tokens=False, return_offsets_mapping=True,
+                          return_attention_mask=False, verbose=False)
+        for row, ids, offsets in zip(block, batch.input_ids, batch.offset_mapping, strict=True):
+            if longest[1] is None or len(ids) > len(longest[1]):
+                longest = row, ids, offsets
+            if shortest[1] is None or len(ids) < len(shortest[1]):
+                shortest = row, ids, offsets
+    parser = context.source_parser()
+    model = make_model(tokenizer, "uniform4").eval()
+    functions = [dict(idx=row["idx"], original_bpe=len(ids)) for row, ids, _ in (longest, shortest)]
+    report, shared_base = {}, None
+    for method in context.METHODS:
+        batch = []
+        for row, ids, offsets in (longest, shortest):
+            ex = context.prepare(row["func"], ids, offsets, tokenizer, method=method, parser=parser, analyze=True)
+            values, positions, _ = ex["fixed"][:, :ex["length"]].tolist()
+            raw = [p for p in positions if p >= 0]
+            if raw != sorted(set(raw)) or not all(values[i] == ids[p] for i, p in enumerate(positions) if p >= 0):
+                raise ValueError("source positions do not match the original BPEs")
+            if method == "uniform4" or len(ids) <= BUDGET:
+                original = prepare_function(row["func"], ids, offsets, tokenizer, alternatives=False)["fixed"]
+                torch.testing.assert_close(ex["fixed"], original, rtol=0, atol=0)
+            batch.append(dict(ex, label=row["target"]))
+        long = batch[0]
+        if method != "uniform4":
+            if long["length"] != MAX_LENGTH:
+                raise ValueError("the longest training function did not fill the budget")
+            if shared_base is not None:
+                torch.testing.assert_close(long["uniform"], shared_base, rtol=0, atol=0)
+            shared_base = long["uniform"]
+        calls = []
+        handle = model.detector.encoder.register_forward_pre_hook(lambda *args: calls.append(1))
+        torch.cuda.reset_peak_memory_stats()
+        with torch.inference_mode():
+            output = model(to_gpu(collate(batch)), details=True)
+        handle.remove()
+        if len(calls) != 1 or not output["logits"].isfinite().all():
+            raise ValueError(f"{method}: expected a single finite UniXcoder encode")
+        report[method] = dict(active_lengths=output["input_lengths"].tolist(), encoder_calls=len(calls),
+                              shape=list(output["input_ids"].shape), peak_allocated_bytes=torch.cuda.max_memory_allocated(),
+                              long_base_windows=long["uniform"].tolist(), relations=long["links"],
+                              parse_error=long["parse_error"], long_compacted_bpe=long["compacted_bpe"])
+    write_json(UNIX_RESULTS / "smoke.json", dict(functions=functions, methods=report))
+    print("UniXcoder extreme-input smoke passed", functions, flush=True)
+
+
+def measure_data(split, tokenizer, method, *, analyze=False):
     start = perf_counter()
-    data = CompactData(split, tokenizer, alternatives=alternatives)
+    if method in context.METHODS:
+        parser = context.source_parser() if analyze or method == "context_aware" else None
+        prepare = partial(context.prepare, method=method, parser=parser, analyze=analyze)
+        data = CompactData(split, tokenizer, prepare=prepare)
+    else:
+        data = CompactData(split, tokenizer, alternatives=METHODS[method][0])
     return data, perf_counter()-start
 
 
 def run(method, tokenizer):
-    root = RESULTS / method
+    unixcoder = method in context.METHODS
+    root = (UNIX_RESULTS if unixcoder else RESULTS) / method
     if (root / "metrics.json").exists():
         print(method, "already complete", flush=True)
         return
-    weights = WEIGHTS / method
+    weights = (UNIX_WEIGHTS if unixcoder else WEIGHTS) / method
     weights.mkdir(parents=True, exist_ok=True)
     set_seed(SEED)
     model = make_model(tokenizer, method)
-    use_selection, use_positions = METHODS[method]
-    train, train_prep = measure_data("train", tokenizer, use_selection)
-    valid, valid_prep = measure_data("valid", tokenizer, use_selection)
+    use_selection, use_positions = METHODS.get(method, (False, False))
+    train, train_prep = measure_data("train", tokenizer, method)
+    valid, valid_prep = measure_data("valid", tokenizer, method)
     train_loader = DataLoader(train, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate)
     valid_loader = DataLoader(valid, batch_size=BATCH_SIZE, collate_fn=collate)
     optimizer = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
@@ -206,10 +272,18 @@ def run(method, tokenizer):
     config = dict(method=method, seed=SEED, epochs=EPOCHS, batch_size=BATCH_SIZE, length=MAX_LENGTH,
                   lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="LOSVERAdamW", weight_decay=0.,
                   warmup=WARMUP_FRACTION, grad_clip=MAX_GRAD_NORM, precision="fp32 eager",
-                  model=str(BASE), loss="function BCE", class_weight=1., threshold=.5, comparison=">",
+                  model=str(UNIX_BASE if unixcoder else BASE), loss="function BCE", class_weight=1., threshold=.5, comparison=">",
                   selection="highest full validation MCC, earliest tie", gpu=torch.cuda.get_device_name(),
                   cuda=torch.version.cuda, torch=torch.__version__, transformers=transformers.__version__,
-                  python=platform.python_version(), quotas=QUOTAS, candidates_per_region=MAX_CANDIDATES,
+                  python=platform.python_version())
+    if unixcoder:
+        config.update(model_id=BACKBONES["unixcoder"][0], model_revision=BACKBONES["unixcoder"][1],
+                      quotas=QUOTAS if method == "uniform4" else context.BASE_QUOTAS,
+                      train_functions=len(train), valid_functions=len(valid),
+                      context_weights=context.RELATED_WEIGHTS if method == "context_aware" else None,
+                      tree_sitter=version("tree-sitter"), tree_sitter_cpp=version("tree-sitter-cpp"))
+    else:
+        config.update(quotas=QUOTAS, candidates_per_region=MAX_CANDIDATES,
                   selector_channels=CHANNELS if use_selection else None,
                   gumbel_temperature=TEMPERATURE if use_selection else None,
                   source_position_bins=POSITION_BINS if use_positions else None,
@@ -243,9 +317,11 @@ def run(method, tokenizer):
         print(method, epoch, f"loss={train_stats['train_loss']:.5f} valid_mcc={validation['mcc']:.4f} train_s={seconds:.1f}",
               flush=True)
     del optimizer, schedule
+    # Checkpoint serialization can retain CUDA optimizer tensors in cycles.
+    gc.collect()
     selected = max(history, key=lambda r: r["validation"]["mcc"])
     model.load_state_dict(torch.load(weights / "best.pt", weights_only=True, map_location="cpu"), strict=True)
-    test, test_prep = measure_data("test", tokenizer, use_selection)
+    test, test_prep = measure_data("test", tokenizer, method)
     result = dict(config=config, selected_epoch=selected["epoch"],
                   training_seconds=sum(row["training_seconds"] for row in history),
                   peak_train_allocated_bytes=max(row["peak_allocated_bytes"] for row in history),
@@ -255,22 +331,37 @@ def run(method, tokenizer):
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         start = perf_counter()
-        scores, traces = predict(model, loader, trace=True)
+        scores, traces = predict(model, loader, trace=not unixcoder)
         seconds, peak = perf_counter()-start, torch.cuda.max_memory_allocated()
         groups = grouped_metrics(data, scores)
         if split == "valid" and groups["overall"] != selected["validation"]:
             raise ValueError("reloaded checkpoint does not reproduce selected validation metrics")
-        selection = describe_selection(data, scores, traces, root / f"{split}.csv.gz")
+        prediction_path = root / f"{split}.csv.gz"
+        if unixcoder:
+            diagnostic_seconds = None
+            if split == "test":
+                diagnostic, diagnostic_seconds = measure_data(split, tokenizer, method, analyze=True)
+                if (diagnostic.metadata != data.metadata or any(not torch.equal(a["fixed"], b["fixed"])
+                        for a, b in zip(diagnostic.examples, data.examples, strict=True))):
+                    raise ValueError("test analysis changed selected inputs")
+                data = diagnostic
+            selection = context.describe(data, scores, prediction_path, paired=split == "test")
+            tokens = selection["overall"]["input_tokens"]
+        else:
+            selection = describe_selection(data, scores, traces, prediction_path)
+            tokens = sum(length for length, _, _ in traces)
         result["split"][split] = dict(groups=groups, selection=selection,
                                       inference_seconds=seconds, peak_inference_allocated_bytes=peak,
-                                      model_tokens=sum(length for length, _, _ in traces))
+                                      model_tokens=tokens)
+        if unixcoder and split == "test":
+            result["split"][split]["selection_analysis_seconds"] = diagnostic_seconds
     write_json(root / "metrics.json", result)
     print(method, "complete", selected["epoch"], flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("methods", choices=METHODS, nargs="*")
+    parser.add_argument("methods", choices=(*METHODS, *context.METHODS), nargs="*")
     parser.add_argument("--smoke-only", action="store_true")
     args = parser.parse_args()
     if not args.methods and not args.smoke_only:
@@ -279,10 +370,14 @@ if __name__ == "__main__":
         raise ValueError("select one RTX 4090 via CUDA_VISIBLE_DEVICES")
     torch.set_num_threads(4)
     torch.backends.cudnn.deterministic = True
-    tokenizer = load_tokenizer("codebert", BASE)
     if args.smoke_only:
         set_seed(SEED)
-        smoke(tokenizer)
+        if any(method in context.METHODS for method in args.methods):
+            smoke_context(load_tokenizer("unixcoder", UNIX_BASE))
+        else:
+            smoke(load_tokenizer("codebert", BASE))
     else:
         for method in args.methods:
+            backbone, source = ("unixcoder", UNIX_BASE) if method in context.METHODS else ("codebert", BASE)
+            tokenizer = load_tokenizer(backbone, source)
             run(method, tokenizer)
