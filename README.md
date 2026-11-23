@@ -2,6 +2,91 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。采用种子 42、验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## UniXcoder 修复区域 Oracle（特权信息）
+
+**Train、Valid 和 Test 的 Oracle 输入都使用划分内的真实配对版本。** 表中的分数只描述该离线协议的实测表现。输入选择需要已知真实修复，常规单函数推理缺少这个条件。
+
+两组对同一原始配对做一次保留行尾的行级对齐。先移除完全相同的前后缀，再在中间区域使用 `SequenceMatcher(autojunk=False)`。替换块在两侧各自选原文。删除块的漏洞侧和插入块的修复侧选实际存在的修改行。另一侧在匹配位置选前后各一条原始行，文件边缘取可用的一条。行区间通过字符偏移映射到原始 UniXcoder BPE，跨行 token 按位置去重。沿用已有缩进简化，保留原 token ID、源码顺序及通用 EOS 间隔。
+
+| 方法 | 512 位置内的选择顺序 |
+| --- | --- |
+| Oracle-Diff | 实际修改区、无对应修改行一侧的邻近行、均匀补充。 |
+| Oracle-Diff+Context | 保留同一组优先区，再补入已有 Tree-sitter 条件头、同名声明和赋值候选，最后均匀补充。 |
+
+超预算时扣除间隔位置，完整保留可容纳的短块，并由较大的块均分剩余正文位置，块内居中保留 BPE。可容纳的块数不足时沿源码顺序等距选择。两组共用同一映射和分配过程，输入只含各自函数的 token 和通用特殊 token。补充语法关系的打分沿用条件头 3、声明和赋值 2 的权重及新增位置成本。简化后能放下的函数保留全部正文。修复区统计采用原始 BPE 分母，插入或删除发生时无对应修改行一侧的邻近行单独统计。
+
+两组各训练一个独立函数分类器。沿用同一 UniXcoder-base-nine、单次编码、BCE、种子 42、16 轮、batch 8、学习率 2e-5、LOSVERAdamW、10% 线性预热、验证 MCC 选模和固定阈值。比较使用已经保存的 Uniform Sampling 和 Context-Aware Selection 预测。配置、逐轮指标和逐样本结果保存在 `results/unixcoder_repair_oracle/`，检查点保存在服务器 `checkpoints/unixcoder_repair_oracle/`。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" paired.py oracle_diff oracle_diff_context --smoke-only
+"$PYTHON" paired.py oracle_diff oracle_diff_context
+```
+
+### 测试表现
+
+| 长度（BPE） | 函数数 | 方法 | MCC | F1 | ROC-AUC | PR-AUC |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| 整体 | 1,128 | Uniform Sampling | 0.0880 | 0.5043 | 0.5599 | 0.5644 |
+| 整体 | 1,128 | Context-Aware Selection | 0.1199 | 0.4572 | 0.5591 | 0.5575 |
+| 整体 | 1,128 | Oracle-Diff | 0.2111 | 0.6107 | 0.6651 | 0.6564 |
+| 整体 | 1,128 | Oracle-Diff+Context | 0.2352 | 0.5970 | 0.6619 | 0.6501 |
+| >510 | 732 | Uniform Sampling | 0.0465 | 0.4441 | 0.5313 | 0.5260 |
+| >510 | 732 | Context-Aware Selection | 0.0935 | 0.3978 | 0.5357 | 0.5305 |
+| >510 | 732 | Oracle-Diff | 0.2620 | 0.6076 | 0.7121 | 0.6920 |
+| >510 | 732 | Oracle-Diff+Context | 0.2666 | 0.5918 | 0.6937 | 0.6709 |
+| 511–1,020 | 254 | Uniform Sampling | 0.1082 | 0.4695 | 0.5782 | 0.5834 |
+| 511–1,020 | 254 | Context-Aware Selection | 0.0963 | 0.3784 | 0.5498 | 0.5427 |
+| 511–1,020 | 254 | Oracle-Diff | 0.2440 | 0.6160 | 0.6694 | 0.6498 |
+| 511–1,020 | 254 | Oracle-Diff+Context | 0.2447 | 0.5714 | 0.6824 | 0.6513 |
+| 1,021–2,040 | 224 | Uniform Sampling | 0.0750 | 0.4526 | 0.5420 | 0.5439 |
+| 1,021–2,040 | 224 | Context-Aware Selection | 0.1553 | 0.4667 | 0.5613 | 0.5738 |
+| 1,021–2,040 | 224 | Oracle-Diff | 0.3220 | 0.6091 | 0.7691 | 0.7578 |
+| 1,021–2,040 | 224 | Oracle-Diff+Context | 0.2520 | 0.6000 | 0.6800 | 0.6678 |
+| ≥2,041 | 254 | Uniform Sampling | -0.0376 | 0.4126 | 0.4729 | 0.4717 |
+| ≥2,041 | 254 | Context-Aware Selection | 0.0319 | 0.3511 | 0.4961 | 0.4911 |
+| ≥2,041 | 254 | Oracle-Diff | 0.2352 | 0.5975 | 0.7066 | 0.6957 |
+| ≥2,041 | 254 | Oracle-Diff+Context | 0.3008 | 0.6044 | 0.7130 | 0.6921 |
+
+已知修复位置在此离线条件下提供了超出均匀采样的判别信息。Oracle-Diff 在长函数上的 MCC、F1、ROC-AUC 和 PR-AUC 均高于两个对照。相对 Uniform Sampling，长函数 MCC 增加 0.2156。添加语法上下文后，整体 MCC 增加 0.0241，长函数只增加 0.0045，整体和长函数的 F1、ROC-AUC、PR-AUC 均下降。长函数精确率从 0.6372 升至 0.6522，召回率从 0.5806 降至 0.5417。MCC 的变化因长度组而异，1,021–2,040 BPE 降低 0.0700，≥2,041 BPE 增加 0.0657。此次单种子结果只支持特定分层和固定阈值下的上下文增益。PR-AUC 使用 average precision。
+
+### 修改保留与输入碰撞
+
+| Test 范围 | 方法 | 实际修改合计 | 替换 | 删除 | 纯插入 | 插入原侧邻近行 | 删除修复侧邻近行 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 整体 | Uniform Sampling | 51.7% | 52.5% | 44.1% | 50.8% | 55.1% | 48.8% |
+| 整体 | Context-Aware Selection | 49.7% | 50.6% | 44.4% | 47.8% | 56.0% | 49.6% |
+| 整体 | 两种 Oracle | 91.4% | 91.2% | 91.6% | 91.9% | 89.9% | 83.8% |
+| >510 | Uniform Sampling | 40.4% | 40.3% | 34.7% | 41.3% | 37.3% | 40.6% |
+| >510 | Context-Aware Selection | 37.8% | 38.0% | 35.1% | 37.7% | 38.5% | 41.6% |
+| >510 | 两种 Oracle | 89.4% | 89.0% | 90.1% | 90.3% | 85.9% | 81.2% |
+| ≥2,041 | Uniform Sampling | 15.2% | 15.0% | 12.4% | 16.1% | 10.6% | 18.6% |
+| ≥2,041 | Context-Aware Selection | 11.9% | 11.9% | 5.0% | 12.7% | 12.1% | 16.0% |
+| ≥2,041 | 两种 Oracle | 85.4% | 85.0% | 88.2% | 86.1% | 75.5% | 66.3% |
+
+统计按各长度范围内的原始 BPE 微平均。替换、删除、插入均以单个 diff 块为单位归类，合计对三类实际修改位置取并集。两种 Oracle 在长函数上均保留 52,267 / 58,483 个实际修改 BPE，各类型的保留计数也完全一样。716 个需要选段的测试函数中，加入上下文改变了 603 个函数的选段。调用 Tree-sitter 的 696 个函数中，241 个带语法错误标志，局部可解析单元仍参与候选提取。[分层逐类型计数](results/unixcoder_repair_oracle/edit_retention.json)
+
+| 方法 | 整体相同输入 | >510 相同输入 | ≥2,041 相同输入 | >510 平均有效位置 / 正文 BPE |
+| --- | ---: | ---: | ---: | ---: |
+| Uniform Sampling | 20/564 | 20/374 | 13/130 | 511.61 / 503.66 |
+| Context-Aware Selection | 32/564 | 32/374 | 21/130 | 511.61 / 494.91 |
+| Oracle-Diff | 0/564 | 0/374 | 0/130 | 511.61 / 504.86 |
+| Oracle-Diff+Context | 0/564 | 0/374 | 0/130 | 511.61 / 501.73 |
+
+按配对两侧较长的原始 BPE 长度分层，逐对比较实际输入 token ID 序列。两种 Oracle 的成对输入碰撞数均为零，分类指标仍不同。预检用纯插入、纯删除、多块修改和 232,766 BPE 的真实配对验证源码映射、间隔预算和单次编码。复算使用逐样本的原始 `source_runs`、`repair_bpe_spans` 和 `oracle_anchor_runs`。[预检](results/unixcoder_repair_oracle/smoke.json) · [两种 Oracle 的配置、预测和检查点指标](results/unixcoder_repair_oracle/)
+
+### 计算成本
+
+| 方法 | 入选轮次 | 验证 MCC | 优化（分钟） | Train / Valid / Test 预处理（秒） | Test 推理（秒） | 训练 / 推理峰值（GiB） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Uniform Sampling | 7 | 0.1142 | 36.06 | 56.91 / 6.34 / 7.86 | 4.76 | 6.446 / 0.842 |
+| Context-Aware Selection | 9 | 0.1163 | 36.06 | 147.76 / 16.33 / 20.07 | 4.76 | 6.446 / 0.842 |
+| Oracle-Diff | 10 | 0.2854 | 35.98 | 81.81 / 8.47 / 10.49 | 4.80 | 6.424 / 0.849 |
+| Oracle-Diff+Context | 13 | 0.2643 | 36.01 | 158.26 / 16.95 / 21.90 | 4.80 | 6.446 / 0.871 |
+
+单张 RTX 4090 依次执行两个 Oracle，含预检、验证和检查点写入共用 1 小时 27 分 40 秒。优化时间累加训练步骤。预处理含读取、对齐、分词及选段，推理含批次组装、一次 UniXcoder 编码和预测分数回传。显存为 PyTorch 已分配峰值。原有基线使用已保存的检查点推理测量。Oracle-Diff+Context 比 Oracle-Diff 多用 11.41 秒测试预处理，编码耗时接近。
+
 ## UniXcoder 上下文感知选择
 
 三组都使用 RGCL 的 UniXcoder、CLS + `RobertaClassificationHead` 和函数级 BCE，每批只调用一次编码器。训练采用 16 轮、batch 8、学习率 2e-5、LOSVERAdamW、10% 线性预热、梯度裁剪 1 和 FP32 eager。模型与 tokenizer 从同一固定版本的本地目录加载。[UniXcoder 固定版本](https://huggingface.co/microsoft/unixcoder-base-nine/tree/5f0dc256eb0904af496d427451da5d7f90261676)

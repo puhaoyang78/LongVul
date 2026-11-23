@@ -1,5 +1,7 @@
 """Compact source BPEs and construct line-aligned windows in four regions."""
 from bisect import bisect_left, bisect_right
+from functools import partial
+from itertools import chain
 import re
 
 import numpy as np
@@ -62,13 +64,18 @@ def aligned_windows(boundaries, lo, hi, center, quota):
         yield (start, end), (overlap, -abs((start + end) / 2 - center))
 
 
-def choose_candidates(boundaries, *, alternatives, quotas=QUOTAS):
+def region_edges(boundaries):
     n = boundaries[-1]
     edges = [0]
     for k in range(1, REGIONS):
         p = bisect_left(boundaries, n * k / REGIONS)
         edges.append(min((p - 1, p), key=lambda t: abs(boundaries[t] - n * k / REGIONS)))
     edges.append(len(boundaries) - 1)
+    return edges
+
+
+def choose_candidates(boundaries, *, alternatives, quotas=QUOTAS):
+    edges = region_edges(boundaries)
     windows, limits = [], []
     for (lo, hi), quota in zip(zip(edges, edges[1:]), quotas, strict=True):
         left, right = boundaries[lo], boundaries[hi]
@@ -164,19 +171,24 @@ def prepare_function(code, ids, offsets, tokenizer, *, alternatives):
 
 
 class CompactData(Dataset):
-    def __init__(self, split, tokenizer, *, alternatives=False, prepare=None):
+    def __init__(self, split, tokenizer, *, alternatives=False, prepare=None, prepare_pair=None):
         rows = prime_source_rows(DATA, split)
         self.targets = torch.tensor([r["target"] for r in rows])
         self.metadata, self.examples = [], []
+        if prepare is None:
+            prepare = partial(prepare_function, alternatives=alternatives)
         for start in range(0, len(rows), 32):
             batch = rows[start:start+32]
-            encoding = tokenizer([r["func"] for r in batch], add_special_tokens=False,
+            texts = [r["func"] for r in batch]
+            encoding = tokenizer(texts, add_special_tokens=False,
                                  return_offsets_mapping=True, return_attention_mask=False, verbose=False)
-            for row, ids, offsets in zip(batch, encoding.input_ids, encoding.offset_mapping, strict=True):
-                if prepare is None:
-                    example = prepare_function(row["func"], ids, offsets, tokenizer, alternatives=alternatives)
-                else:
-                    example = prepare(row["func"], ids, offsets, tokenizer)
+            sources = zip(texts, encoding.input_ids, encoding.offset_mapping, strict=True)
+            if prepare_pair is None:
+                examples = (prepare(*source, tokenizer) for source in sources)
+            else:
+                examples = chain.from_iterable(prepare_pair(a, b, tokenizer)
+                                                for a, b in zip(sources, sources, strict=True))
+            for row, ids, example in zip(batch, encoding.input_ids, examples, strict=True):
                 example["label"] = row["target"]
                 self.examples.append(example)
                 self.metadata.append(dict(idx=row["idx"], sample_key=row["sample_key"],

@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 from transformers import get_linear_schedule_with_warmup, set_seed
 
 import context_selection as context
+import repair_oracle as repair
 from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, collate, prepare_function
 from csp_model import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, CompactionClassifier, pack
 from window_inputs import BASE, DATA, ROOT, grouped_metrics
@@ -34,11 +35,14 @@ WEIGHTS = ROOT / "checkpoints" / "csp"
 UNIX_BASE = BASE.with_name("unixcoder-base-nine")
 UNIX_RESULTS = ROOT / "results" / "unixcoder_context"
 UNIX_WEIGHTS = ROOT / "checkpoints" / "unixcoder_context"
+ORACLE_RESULTS = ROOT / "results" / "unixcoder_repair_oracle"
+ORACLE_WEIGHTS = ROOT / "checkpoints" / "unixcoder_repair_oracle"
+UNIX_METHODS = (*context.METHODS, *repair.METHODS)
 
 
 def make_model(tokenizer, method):
     select_windows, use_positions = METHODS.get(method, (False, False))
-    backbone, source = ("unixcoder", UNIX_BASE) if method in context.METHODS else ("codebert", BASE)
+    backbone, source = ("unixcoder", UNIX_BASE) if method in UNIX_METHODS else ("codebert", BASE)
     base = build_model(backbone, "plm_classifier", model_source=source)
     return CompactionClassifier(base, tokenizer, select_windows=select_windows, use_positions=use_positions).cuda()
 
@@ -240,9 +244,106 @@ def smoke_context(tokenizer):
     print("UniXcoder extreme-input smoke passed", functions, flush=True)
 
 
+def smoke_repair(tokenizer):
+    rows = prime_source_rows(DATA, "train")
+    pairs = list(zip(rows[::2], rows[1::2], strict=True))
+    cases = {"extreme": max(pairs, key=lambda pair: max(len(row["func"]) for row in pair))}
+    for pair in pairs:
+        edits = repair.line_edits(*(r["func"].splitlines(keepends=True) for r in pair))
+        kinds = {item[0] for item in edits}
+        if kinds == {"insert"}:
+            cases.setdefault("pure_insert", pair)
+        if kinds == {"delete"}:
+            cases.setdefault("pure_delete", pair)
+        if len(edits) > 1 and max(len(row["func"]) for row in pair) > 3500:
+            cases.setdefault("multi_block", pair)
+        if len(cases) == 4:
+            break
+    if len(cases) != 4:
+        raise ValueError("real repair smoke requires insertion, deletion and multiple blocks")
+    checked, examples = {}, {method: [] for method in repair.METHODS}
+    parser = context.source_parser()
+    for name, pair in cases.items():
+        texts = [row["func"] for row in pair]
+        lines = [code.splitlines(keepends=True) for code in texts]
+        edits = repair.line_edits(*lines)
+        last_left = last_right = 0
+        for _, start, end, left, right in edits:
+            if lines[0][last_left:start] != lines[1][last_right:left]:
+                raise ValueError("line diff leaves unequal unchanged lines")
+            last_left, last_right = end, right
+        if lines[0][last_left:] != lines[1][last_right:]:
+            raise ValueError("line diff leaves an unequal suffix")
+        encoded = tokenizer(texts, add_special_tokens=False, return_offsets_mapping=True,
+                            return_attention_mask=False, verbose=False)
+        sources = list(zip(texts, encoded.input_ids, encoded.offset_mapping, strict=True))
+        checked[name] = dict(indices=[row["idx"] for row in pair], original_bpe=[len(s[1]) for s in sources],
+                             blocks={kind: sum(edit[0] == kind for edit in edits) for kind in repair.EDIT_TYPES},
+                             methods={})
+        shared = None
+        for method in repair.METHODS:
+            built = repair.prepare_pair(*sources, tokenizer, method=method, parser=parser)
+            anchor_runs = [ex["oracle_anchor_runs"] for ex in built]
+            if shared is not None and shared != anchor_runs:
+                raise ValueError("repair oracle arms reserved different anchors")
+            shared = anchor_runs
+            retained = []
+            for side, (ex, row, (code, ids, offsets)) in enumerate(zip(built, pair, sources, strict=True)):
+                positions = [p for p in ex["fixed"][1, :ex["length"]].tolist() if p >= 0]
+                visible = context.merge([(p, p+1) for p in positions])
+                if positions != sorted(set(positions)) or ex["length"] > MAX_LENGTH:
+                    raise ValueError("unordered or over-budget repair input")
+                keep, _ = context.input_layout(code, ids, offsets)
+                compact = {p: i for i, p in enumerate(keep)}
+                expected_ids = [tokenizer.cls_token_id]
+                previous = None
+                for p in positions:
+                    if previous is not None and compact[p] != compact[previous]+1:
+                        expected_ids.append(tokenizer.sep_token_id)
+                    expected_ids.append(ids[p])
+                    previous = p
+                expected_ids.append(tokenizer.sep_token_id)
+                if expected_ids != ex["fixed"][0, :ex["length"]].tolist():
+                    raise ValueError("repair input does not match mapped source BPEs")
+                if any(not context.contains(span, visible) for span in anchor_runs[side]):
+                    raise ValueError("reserved repair anchor is missing from the input")
+                retention = {k: [repair.overlap_bpe(spans, visible), sum(j-i for i, j in spans)]
+                             for k, spans in ex["repair_bpe_spans"].items()}
+                if name in {"pure_insert", "pure_delete"}:
+                    kind = name.removeprefix("pure_")
+                    has_code = (side == 1) == (kind == "insert")
+                    expected = kind if has_code else f"{kind}_gap"
+                    other = f"{kind}_gap" if has_code else kind
+                    if retention[expected][0] == 0 or retention[other][1] != 0:
+                        raise ValueError(f"incorrect actual/gap mapping for {kind}")
+                retained.append(dict(length=ex["length"], edit_bpe=retention, anchor_runs=anchor_runs[side]))
+                examples[method].append(dict(ex, label=row["target"]))
+            checked[name]["methods"][method] = retained
+
+    model = make_model(tokenizer, "oracle_diff").eval()
+    timings = {}
+    for method, batch in examples.items():
+        calls = []
+        handle = model.detector.encoder.register_forward_pre_hook(lambda *args: calls.append(1))
+        torch.cuda.reset_peak_memory_stats()
+        with torch.inference_mode():
+            output = model(to_gpu(collate(batch)), details=True)
+        handle.remove()
+        if len(calls) != 1 or not output["logits"].isfinite().all():
+            raise ValueError(f"{method}: expected a single finite UniXcoder encode")
+        timings[method] = dict(encoder_calls=len(calls), shape=list(output["input_ids"].shape),
+                               peak_allocated_bytes=torch.cuda.max_memory_allocated())
+    write_json(ORACLE_RESULTS / "smoke.json", dict(privileged_information=True, cases=checked, inference=timings))
+    print("Privileged repair smoke passed", {name: x["original_bpe"] for name, x in checked.items()}, flush=True)
+
+
 def measure_data(split, tokenizer, method, *, analyze=False):
     start = perf_counter()
-    if method in context.METHODS:
+    if method in repair.METHODS:
+        parser = context.source_parser() if method == "oracle_diff_context" else None
+        prepare = partial(repair.prepare_pair, method=method, parser=parser)
+        data = CompactData(split, tokenizer, prepare_pair=prepare)
+    elif method in context.METHODS:
         parser = context.source_parser() if analyze or method == "context_aware" else None
         prepare = partial(context.prepare, method=method, parser=parser, analyze=analyze)
         data = CompactData(split, tokenizer, prepare=prepare)
@@ -252,12 +353,13 @@ def measure_data(split, tokenizer, method, *, analyze=False):
 
 
 def run(method, tokenizer):
-    unixcoder = method in context.METHODS
-    root = (UNIX_RESULTS if unixcoder else RESULTS) / method
+    unixcoder = method in UNIX_METHODS
+    privileged = method in repair.METHODS
+    root = (ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS) / method
     if (root / "metrics.json").exists():
         print(method, "already complete", flush=True)
         return
-    weights = (UNIX_WEIGHTS if unixcoder else WEIGHTS) / method
+    weights = (ORACLE_WEIGHTS if privileged else UNIX_WEIGHTS if unixcoder else WEIGHTS) / method
     weights.mkdir(parents=True, exist_ok=True)
     set_seed(SEED)
     model = make_model(tokenizer, method)
@@ -282,6 +384,12 @@ def run(method, tokenizer):
                       train_functions=len(train), valid_functions=len(valid),
                       context_weights=context.RELATED_WEIGHTS if method == "context_aware" else None,
                       tree_sitter=version("tree-sitter"), tree_sitter_cpp=version("tree-sitter-cpp"))
+        if privileged:
+            config.pop("quotas")
+            config.update(privileged_information="paired counterpart source on train, valid and test",
+                          diff="exact lines, SequenceMatcher autojunk=False, common prefix/suffix trimmed",
+                          gap_context_lines_per_side=1, context_weights={k: context.RELATED_WEIGHTS[k]
+                          for k in repair.CONTEXT_TYPES} if method == "oracle_diff_context" else None)
     else:
         config.update(quotas=QUOTAS, candidates_per_region=MAX_CANDIDATES,
                   selector_channels=CHANNELS if use_selection else None,
@@ -339,13 +447,14 @@ def run(method, tokenizer):
         prediction_path = root / f"{split}.csv.gz"
         if unixcoder:
             diagnostic_seconds = None
-            if split == "test":
+            if split == "test" and not privileged:
                 diagnostic, diagnostic_seconds = measure_data(split, tokenizer, method, analyze=True)
                 if (diagnostic.metadata != data.metadata or any(not torch.equal(a["fixed"], b["fixed"])
                         for a, b in zip(diagnostic.examples, data.examples, strict=True))):
                     raise ValueError("test analysis changed selected inputs")
                 data = diagnostic
-            selection = context.describe(data, scores, prediction_path, paired=split == "test")
+            fields = repair.PREDICTION_FIELDS if privileged else ()
+            selection = context.describe(data, scores, prediction_path, paired=split == "test", include=fields)
             tokens = selection["overall"]["input_tokens"]
         else:
             selection = describe_selection(data, scores, traces, prediction_path)
@@ -353,7 +462,7 @@ def run(method, tokenizer):
         result["split"][split] = dict(groups=groups, selection=selection,
                                       inference_seconds=seconds, peak_inference_allocated_bytes=peak,
                                       model_tokens=tokens)
-        if unixcoder and split == "test":
+        if unixcoder and split == "test" and not privileged:
             result["split"][split]["selection_analysis_seconds"] = diagnostic_seconds
     write_json(root / "metrics.json", result)
     print(method, "complete", selected["epoch"], flush=True)
@@ -361,7 +470,7 @@ def run(method, tokenizer):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("methods", choices=(*METHODS, *context.METHODS), nargs="*")
+    parser.add_argument("methods", choices=(*METHODS, *UNIX_METHODS), nargs="*")
     parser.add_argument("--smoke-only", action="store_true")
     args = parser.parse_args()
     if not args.methods and not args.smoke_only:
@@ -372,12 +481,17 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     if args.smoke_only:
         set_seed(SEED)
-        if any(method in context.METHODS for method in args.methods):
+        if any(method in repair.METHODS for method in args.methods):
+            smoke_repair(load_tokenizer("unixcoder", UNIX_BASE))
+        elif any(method in context.METHODS for method in args.methods):
             smoke_context(load_tokenizer("unixcoder", UNIX_BASE))
         else:
             smoke(load_tokenizer("codebert", BASE))
     else:
         for method in args.methods:
-            backbone, source = ("unixcoder", UNIX_BASE) if method in context.METHODS else ("codebert", BASE)
+            backbone, source = ("unixcoder", UNIX_BASE) if method in UNIX_METHODS else ("codebert", BASE)
             tokenizer = load_tokenizer(backbone, source)
             run(method, tokenizer)
+        if any(method in repair.METHODS for method in args.methods) and all(
+                (ORACLE_RESULTS / method / "metrics.json").is_file() for method in repair.METHODS):
+            write_json(ORACLE_RESULTS / "edit_retention.json", repair.repair_retention(ORACLE_RESULTS, UNIX_RESULTS))

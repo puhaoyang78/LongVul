@@ -225,8 +225,12 @@ def prefer_context(base, links):
     return spans
 
 
+def input_layout(code, ids, offsets):
+    return line_layout(code, ids, offsets) if len(ids) > BUDGET else (list(range(len(ids))), [0, len(ids)])
+
+
 def prepare(code, ids, offsets, tokenizer, *, method, parser=None, analyze=False):
-    keep, boundaries = line_layout(code, ids, offsets) if len(ids) > BUDGET else (list(range(len(ids))), [0, len(ids)])
+    keep, boundaries = input_layout(code, ids, offsets)
     links, parse_error = set(), None
     if len(keep) <= BUDGET:
         base = spans = [(0, len(keep))]
@@ -241,14 +245,11 @@ def prepare(code, ids, offsets, tokenizer, *, method, parser=None, analyze=False
         else:
             selected = prefer_context(base, links) if method == "context_aware" else base
             spans = uniform_fill(selected, boundaries, limits)
-    fixed, length = pack_fixed(ids, keep, spans, tokenizer)
-    if len(keep) > BUDGET and method != "uniform4" and length != MAX_LENGTH:
-        raise ValueError(f"{method}: failed to fill the {MAX_LENGTH}-token budget")
     uniform = torch.full((REGIONS, 4), -1, dtype=torch.int32)
     for i, (start, end) in enumerate(base):
         if start < end:
             uniform[i] = torch.tensor((start, end, keep[start], keep[end-1]+1))
-    facts = dict(compacted_bpe=len(keep))
+    example = fixed_example(ids, keep, spans, tokenizer, uniform, exact=method != "uniform4")
     if analyze:
         linked = {kind: [0, 0, 0] for kind in RELATED_WEIGHTS}
         retained = merge(spans)
@@ -257,11 +258,18 @@ def prepare(code, ids, offsets, tokenizer, *, method, parser=None, analyze=False
             linked[kind][0] += 1
             linked[kind][1] += int(context_kept)
             linked[kind][2] += int(context_kept and contains(anchor, retained))
-        facts.update(links=linked, parse_error=parse_error)
-    return dict(fixed=fixed, length=length, raw=len(ids), uniform=uniform, bank=None, **facts)
+        example.update(links=linked, parse_error=parse_error)
+    return example
 
 
-def describe(data, scores, path, *, paired):
+def fixed_example(ids, keep, spans, tokenizer, uniform, *, exact=True):
+    fixed, length = pack_fixed(ids, keep, spans, tokenizer)
+    if exact and len(keep) > BUDGET and length != MAX_LENGTH:
+        raise ValueError(f"input failed to fill the {MAX_LENGTH}-token budget")
+    return dict(fixed=fixed, length=length, raw=len(ids), uniform=uniform, bank=None, compacted_bpe=len(keep))
+
+
+def describe(data, scores, path, *, paired, include=()):
     rows, inputs = [], []
     for row, ex, score in zip(data.metadata, data.examples, scores, strict=True):
         positions = [i for i in ex["fixed"][1, :ex["length"]].tolist() if i >= 0]
@@ -272,8 +280,9 @@ def describe(data, scores, path, *, paired):
         rows.append(dict(**row, probability=score, prediction=int(score > .5), input_length=ex["length"],
                          source_bpe=len(positions), source_runs=runs, base_windows=[part for part in base if part[0] >= 0],
                          compacted_bpe=ex["compacted_bpe"]))
-        if paired:
+        if paired and "links" in ex:
             rows[-1].update(parse_error=ex["parse_error"], links=ex["links"])
+        rows[-1].update((key, ex[key]) for key in include)
     if paired and [row["target"] for row in rows] != [1, 0] * (len(rows)//2):
         raise ValueError("test pair order differs from the original paired release")
     pairs = [(max(a["original_bpe"], b["original_bpe"]), x == y) for a, b, x, y in
@@ -295,13 +304,14 @@ def describe(data, scores, path, *, paired):
                              source_tokens=sum(row["source_bpe"] for row in group),
                              full_budget=sum(row["input_length"] == MAX_LENGTH for row in group))
         if paired:
-            counts = {kind: [sum(row["links"][kind][i] for row in group) for i in range(3)]
-                      for kind in RELATED_WEIGHTS}
             matches = [same for length, same in pairs if lo <= length <= hi]
             summary[name].update(pairs=len(matches), identical_inputs=sum(matches),
-                                 identical_fraction=sum(matches)/len(matches) if matches else None,
-                                 syntax_analyzed=sum(row["parse_error"] is not None for row in group),
-                                 syntax_errors=sum(row["parse_error"] is True for row in group),
-                                 relations={k: dict(available=a, context_kept=b, both_kept=c)
-                                            for k, (a, b, c) in counts.items()})
+                                 identical_fraction=sum(matches)/len(matches) if matches else None)
+            if "links" in rows[0]:
+                counts = {kind: [sum(row["links"][kind][i] for row in group) for i in range(3)]
+                          for kind in RELATED_WEIGHTS}
+                summary[name].update(syntax_analyzed=sum(row["parse_error"] is not None for row in group),
+                                     syntax_errors=sum(row["parse_error"] is True for row in group),
+                                     relations={k: dict(available=a, context_kept=b, both_kept=c)
+                                                for k, (a, b, c) in counts.items()})
     return summary
