@@ -59,25 +59,79 @@ def gaps(spans, lo, hi):
         yield lo, hi
 
 
-def uniform_fill(spans, boundaries, limits, *, budget=BUDGET, fragment_limit=None):
-    # Spend one share per source region on a centered window in its largest gap.
-    spans = merge(spans)
-    for i, (left, right) in enumerate(limits):
-        quota = (budget - occupied(spans)) // (len(limits) - i) - 1
-        if quota <= 0:
-            continue
-        lo, hi = max(gaps(spans, left, right), key=lambda p: p[1]-p[0], default=(left, left))
-        first, last = bisect_left(boundaries, lo), bisect_right(boundaries, hi) - 1
-        windows = aligned_windows(boundaries, first, last, (lo+hi)/2, quota)
-        best = max((candidate for candidate in windows if candidate[0][0] < candidate[0][1]),
-                   key=lambda candidate: candidate[1], default=None)
-        if best is not None:
-            augmented = merge([*spans, best[0]])
-            if fragment_limit is None or len(augmented) <= fragment_limit:
-                spans = augmented
+def extend_context(spans, boundaries, limits, budget, fragment_limit, unit_at):
+    """Complete retained units, then grow their contiguous neighbors."""
+    size = boundaries[-1]
+    if unit_at is None:
+        def unit_at(position):
+            cut = bisect_right(boundaries, position)
+            return boundaries[cut-1], boundaries[cut]
 
-    # Spend line-rounding residue adjacent to retained source. Prefer an aligned
-    # edge whenever a complete line unit fits into the remaining budget.
+    def add(unit):
+        nonlocal spans
+        expanded = merge([*spans, unit])
+        if expanded == spans or occupied(expanded) > budget:
+            return False
+        if fragment_limit is not None and len(expanded) > max(fragment_limit, len(spans)):
+            return False
+        spans = expanded
+        return True
+
+    for start, end in tuple(spans):
+        for position in (start, end-1):
+            add(unit_at(position))
+
+    # Seed at most one complete unit in an uncovered band, up to the number
+    # of bands in total. Additional budget grows these and the original spans.
+    for lo, hi in limits:
+        if len(spans) >= len(limits):
+            break
+        if lo >= hi or intersects((lo, hi), spans):
+            continue
+        center = (lo+hi)/2
+        i = bisect_left(boundaries, center)
+        units = {unit_at(boundaries[j]) for j in (i-1, i) if 0 <= j < len(boundaries)-1}
+        for a, b in sorted(units, key=lambda p: (abs((p[0]+p[1])/2-center), p[0], p[1])):
+            if lo <= a < b <= hi and add((a, b)):
+                break
+
+    while occupied(spans) < budget:
+        changed = False
+        for start, end in tuple(spans):
+            if start > 0:
+                changed |= add(unit_at(start-1))
+            if end < size:
+                changed |= add(unit_at(end))
+        if not changed:
+            break
+    return spans
+
+
+def uniform_fill(spans, boundaries, limits, *, budget=BUDGET, fragment_limit=None, contiguous=True, unit_at=None):
+    spans = merge(spans)
+    budget = min(budget, boundaries[-1])
+    if occupied(spans) > budget:
+        raise ValueError("selected code exceeds the token budget")
+    if contiguous:
+        spans = extend_context(spans, boundaries, limits, budget, fragment_limit, unit_at)
+    else:
+        # Reproduce the centered windows used to train the archived classifiers.
+        for i, (left, right) in enumerate(limits):
+            quota = (budget - occupied(spans)) // (len(limits) - i) - 1
+            if quota <= 0:
+                continue
+            lo, hi = max(gaps(spans, left, right), key=lambda p: p[1]-p[0], default=(left, left))
+            first, last = bisect_left(boundaries, lo), bisect_right(boundaries, hi) - 1
+            windows = aligned_windows(boundaries, first, last, (lo+hi)/2, quota)
+            best = max((candidate for candidate in windows if candidate[0][0] < candidate[0][1]),
+                       key=lambda candidate: candidate[1], default=None)
+            if best is not None:
+                augmented = merge([*spans, best[0]])
+                if fragment_limit is None or len(augmented) <= fragment_limit:
+                    spans = augmented
+
+    # Spend any residue next to an existing span, preferring a physical cut
+    # within budget. With no spans this creates the first contiguous window.
     while (room := budget - occupied(spans)) > 0:
         left, right = max(gaps(spans, 0, boundaries[-1]), key=lambda p: p[1]-p[0])
         if left:
@@ -89,6 +143,10 @@ def uniform_fill(spans, boundaries, limits, *, budget=BUDGET, fragment_limit=Non
             edge = boundaries[bisect_left(boundaries, cap)]
             span = (edge if edge < right else cap, right)
         spans = merge([*spans, span])
+    if contiguous:
+        # A one-BPE seam replaces one in-body SEP, even at full occupancy.
+        seams = [(end, start) for (_, end), (start, _) in zip(spans, spans[1:]) if start-end == 1]
+        spans = merge([*spans, *seams])
     return spans
 
 

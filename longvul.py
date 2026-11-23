@@ -21,7 +21,7 @@ from transformers import set_seed
 
 import budget_selection as selection
 from compaction import REGIONS, collate, pack_fixed
-from context_selection import contains, merge, occupied, source_parser
+from context_selection import contains, intersects, merge, occupied, source_parser
 from dependence import (BATCH_BYTES, BATCH_FUNCTIONS, EDGE_TYPES, FRONTEND_ARGS, ISOLATE_BYTES,
                         ISOLATED_TIMEOUT_SECONDS, JAVA, MAX_DEFINITIONS, TIMEOUT_SECONDS, cached_graphs,
                         extract, joern_version, language_suffix)
@@ -122,7 +122,7 @@ def paired_edits(sources):
 
 class SelectedData(Dataset):
     def __init__(self, rows, sources, tokenizer, method, *, weights=(0, 0), scores=None, graphs=None, edits=None,
-                 budget=BUDGET):
+                 budget=BUDGET, continuous_fill=False):
         started = perf_counter()
         self.metadata, self.examples, self.decisions = [], [], []
         self.targets = torch.tensor([row["target"] for row in rows])
@@ -131,12 +131,13 @@ class SelectedData(Dataset):
         for i, (row, source) in enumerate(zip(rows, sources, strict=True)):
             graph, graph_status = selection.available_graph(graphs[i] if graphs is not None else None, weights)
             active_weights = weights if graph is not None else (0, 0)
-            spans, anchors, steps = selection.choose(source, method, budget, weights=active_weights, graph=graph,
-                                                   scores=scores[i] if scores is not None else None,
-                                                   edits=edits[i] if edits is not None else None, parser=self.parser)
+            spans, anchors, steps, retained = selection.choose(
+                source, method, budget, weights=active_weights, graph=graph,
+                scores=scores[i] if scores is not None else None, edits=edits[i] if edits is not None else None,
+                parser=self.parser, continuous_fill=continuous_fill)
             packed, length = pack_fixed(source.ids, range(len(source.ids)), spans, tokenizer, max_length=budget+2)
-            if length != occupied(spans)+2 or any(not contains(span, spans) for span in anchors):
-                raise ValueError("Packed input cost or reserved edit coverage differs from selection")
+            if length != occupied(spans)+2 or any(not contains(span, spans) for span in (*retained, *anchors)):
+                raise ValueError("Packed input cost or preselected coverage differs from selection")
             if len(source.ids) > budget and length != budget+2:
                 raise ValueError("Long input failed to fill its position budget")
             self.examples.append(dict(fixed=packed, length=length, raw=source.raw_bpe, uniform=uniform, bank=None,
@@ -146,7 +147,7 @@ class SelectedData(Dataset):
             if any(weights):
                 self.metadata[-1]["dependency_status"] = graph_status
                 self.metadata[-1]["native_graph_status"] = graphs[i]["status"]
-            self.decisions.append((spans, anchors, steps))
+            self.decisions.append((spans, anchors, steps, retained))
         self.seconds = perf_counter()-started
 
     def __len__(self):
@@ -165,10 +166,12 @@ def collate_long(examples):
 
 def report_data(data, sources, probabilities, path, *, include_pairs=False):
     rows = []
+    probabilities = [None]*len(data) if probabilities is None else probabilities
     for meta, example, decisions, source, score in zip(data.metadata, data.examples, data.decisions, sources,
                                                         probabilities, strict=True):
-        spans, anchors, steps = decisions
-        rows.append(dict(**meta, probability=score, prediction=int(score > .5), input_length=example["length"],
+        spans, anchors, steps, _ = decisions
+        classification = {} if score is None else dict(probability=score, prediction=int(score > .5))
+        rows.append(dict(**meta, **classification, input_length=example["length"],
                          source_bpe=sum(b-a for a,b in spans), source_runs=original_runs(source, spans),
                          simplified_runs=spans, oracle_anchors=anchors, optimizer_steps=steps))
     if include_pairs:
@@ -176,6 +179,8 @@ def report_data(data, sources, probabilities, path, *, include_pairs=False):
         for i in range(0, len(active), 2):
             same = active[i] == active[i+1]
             rows[i]["identical_pair_input"] = rows[i+1]["identical_pair_input"] = same
+    if path is None:
+        return rows
     tmp = path.with_suffix(".tmp")
     with gzip.open(tmp, "wt", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
@@ -209,8 +214,13 @@ def input_report(rows, sources, graphs, simple_edits, raw_edits):
         totals["actual_edits"] = merge([r for kind in EDIT_TYPES for r in raw[kind]])
         edits_kept = {kind: [overlap_bpe(intervals, row["source_runs"]), sum(b-a for a,b in intervals)]
                       for kind, intervals in totals.items()}
+        quartiles = [source.raw_bpe*i//REGIONS for i in range(REGIONS+1)]
         diagnostics.append(dict(length=source.raw_bpe, simplified_bpe=len(source.ids),
                                 pieces=[b-a for a,b in spans], specials=int(row["input_length"])-int(row["source_bpe"]),
+                                input_length=int(row["input_length"]),
+                                raw_retained=sum(b-a for a,b in row["source_runs"]),
+                                covered_quartiles=sum(a < b and intersects((a,b), row["source_runs"])
+                                                     for a,b in zip(quartiles, quartiles[1:])),
                                 statements=[len(kept & statements), len(touched & statements), len(statements)],
                                 edges=edges, edits=edits_kept))
     pairs = [(max(sources[i].raw_bpe, sources[i+1].raw_bpe), str(rows[i]["identical_pair_input"]) == "True")
@@ -226,12 +236,18 @@ def input_report(rows, sources, graphs, simple_edits, raw_edits):
                   for kind in diagnostics[0]["edits"]}
         pair_inputs = [same for length, same in pairs if lo <= length <= hi]
         full, touched, available = (sum(r["statements"][i] for r in group) for i in range(3))
+        specials = sum(r["specials"] for r in group)
+        raw, retained = sum(r["length"] for r in group), sum(r["raw_retained"] for r in group)
         result[name] = dict(functions=n, body_bpe=total, mean_body_bpe=total/n, fragments=len(fragments),
                             mean_fragments=len(fragments)/n, mean_fragment_bpe=float(np.mean(fragments)) if fragments else None,
                             median_fragment_bpe=float(np.median(fragments)) if fragments else None,
                             fragment_counts={label: sum(start <= v <= end for v in fragments) for label,start,end in
                                              (("1-8",1,8),("9-32",9,32),("33-128",33,128),("129+",129,float("inf")))},
-                            special_tokens=sum(r["specials"] for r in group), pairs=len(pair_inputs),
+                            special_tokens=specials, internal_separators=specials-2*n,
+                            max_input_length=max(r["input_length"] for r in group),
+                            original_bpe=dict(retained=retained, available=raw, fraction=retained/raw if raw else None),
+                            mean_covered_source_quartiles=sum(r["covered_quartiles"] for r in group)/n,
+                            pairs=len(pair_inputs),
                             identical_pair_inputs=sum(pair_inputs),
                             statements=dict(fully_retained=full, touched=touched, available=available,
                                             complete_among_touched=full/touched if touched else None),
@@ -414,7 +430,7 @@ def test_retention(method, test_rows, sources, tokenizer, graphs, simpl, raw, we
                         edits=simpl if method.startswith("oracle_") else None, scores=scores,
                         graphs=graphs if any(weights) else None, budget=510)
     rows = [dict(simplified_runs=spans, source_runs=original_runs(source, spans), source_bpe=sum(b-a for a,b in spans),
-                 input_length=ex["length"]) for source, ex, (spans, _, _) in
+                 input_length=ex["length"]) for source, ex, (spans, _, _, _) in
             zip(sources, data.examples, data.decisions, strict=True)]
     return dict(selection_seconds=data.seconds, groups=input_report(rows, sources, graphs, simpl, raw))
 
@@ -520,6 +536,57 @@ def run(tokenizer, micro):
         test_groups=result["groups"], privileged_test=result["privileged_test"]) for method,result in outcomes.items()}))
 
 
+def audit_fill(tokenizer):
+    """Compare layouts on the completed run's Test inputs with the same region and graph choices."""
+    if not (RESULTS / "summary.json").is_file():
+        raise ValueError("The formal run must finish before comparing contiguous fill")
+    config = json.loads((RESULTS / "weights.json").read_text())
+    weights, oracle = tuple(config["weights"]), config["winner"]
+    rows = prime_source_rows(DATA, "test")
+    sources, _ = tokenize_sources([r["func"] for r in rows], tokenizer, source_parser(), BUDGET)
+    graphs, _ = load_dependencies(rows, sources, "test")
+    localizer = Localizer().cuda()
+    localizer.load_state_dict(torch.load(WEIGHTS / "localizer" / "best.pt", weights_only=True, map_location="cpu"))
+    regions = Regions(sources)
+    scores, _ = score_regions(localizer, regions)
+    scores = regions.regroup(scores)
+    del localizer, regions
+    print("Comparing continuous fill with the saved LongVul layouts", flush=True)
+    data = {"longvul": SelectedData(rows, sources, tokenizer, "longvul", weights=weights, scores=scores,
+                                    graphs=graphs, continuous_fill=True)}
+    simpl, raw = paired_edits(sources)
+    print("Comparing continuous fill with the saved weighted Oracle layouts", flush=True)
+    data[oracle] = SelectedData(rows, sources, tokenizer, oracle, weights=weights, edits=simpl,
+                                 graphs=graphs, continuous_fill=True)
+    results = {}
+    membership = ("idx", "sample_key", "target", "original_bpe", "simplified_bpe", "native_graph_status",
+                  "dependency_status", "optimizer_steps")
+    for method, selected in data.items():
+        before = read_predictions(RESULTS / method / "test.csv.gz")
+        after = report_data(selected, sources, None, None, include_pairs=True)
+        changed_lengths = []
+        for original, revised, (_, anchors, _, retained), source in zip(
+                before, after, selected.decisions, sources, strict=True):
+            old_spans = merge(original["simplified_runs"])
+            if (any(str(original[key]) != str(revised[key]) for key in membership)
+                    or merge(original["oracle_anchors"]) != anchors
+                    or any(not contains(span, old_spans) for span in retained)):
+                raise ValueError(f"{method}: fixed selection differs for {original['sample_key']}")
+            if old_spans != revised["simplified_runs"]:
+                if len(source.ids) <= BUDGET:
+                    raise ValueError(f"{method}: a function inside the budget changed layout")
+                changed_lengths.append(source.raw_bpe)
+        results[method] = dict(privileged_test=method.startswith("oracle_"), preserved_prefill_functions=len(after),
+                               selection_seconds=selected.seconds,
+                               layouts_changed={key: sum(lo <= n <= hi for n in changed_lengths)
+                                                for key, (lo, hi) in LENGTHS.items()},
+                               formal=input_report(before, sources, graphs, simpl, raw),
+                               continuous=input_report(after, sources, graphs, simpl, raw))
+        print(method, "continuous fill compared", len(after), len(changed_lengths), flush=True)
+    write_json(RESULTS / "continuous_fill.json", dict(selection_only=True, split="test", length=MAX_LENGTH,
+                                                      ddg_cdg_weights=list(weights), methods=results))
+
+
 def predict_source(code, tokenizer, *, filename=None, smoke=False):
     sources, source_timing = tokenize_sources([code], tokenizer, source_parser(), BUDGET)
     source = sources[0]
@@ -535,7 +602,7 @@ def predict_source(code, tokenizer, *, filename=None, smoke=False):
     score, locator_seconds = score_regions(localizer, Regions([source]))
     start = perf_counter()
     graph, graph_status = selection.available_graph(dict(status=graphs[0]["status"], edges=edges), weights)
-    spans, _, steps = selection.choose(source, "longvul", BUDGET, weights=weights if graph is not None else (0,0),
+    spans, _, steps, _ = selection.choose(source, "longvul", BUDGET, weights=weights if graph is not None else (0,0),
                                        graph=graph, scores=score)
     fixed, length = pack_fixed(source.ids, range(len(source.ids)), spans, tokenizer, max_length=MAX_LENGTH)
     selection_seconds = perf_counter()-start
@@ -620,10 +687,10 @@ def smoke(tokenizer):
     region_scores, locator_seconds = score_regions(locator, Regions(sources[:1]))
     real_scores, _ = score_regions(locator, Regions(real))
     del locator
-    real_selection, _, _ = selection.choose(real[0], "longvul", BUDGET, weights=(1,1), scores=real_scores, graph=real_edges)
+    real_selection, _, _, _ = selection.choose(real[0], "longvul", BUDGET, weights=(1,1), scores=real_scores, graph=real_edges)
     assert occupied(real_selection)+2 <= MAX_LENGTH
     start = perf_counter()
-    chosen, _, choices = selection.choose(sources[0], "predicted", BUDGET, scores=region_scores)
+    chosen, _, choices, _ = selection.choose(sources[0], "predicted", BUDGET, scores=region_scores)
     selection_seconds = perf_counter()-start
     assert occupied(chosen)+2 == MAX_LENGTH and len(chosen) <= selection.MAX_FRAGMENTS
 
@@ -686,7 +753,7 @@ def smoke(tokenizer):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("action", choices=("graphs", "smoke", "run", "predict"))
+    ap.add_argument("action", choices=("graphs", "smoke", "run", "predict", "audit-fill"))
     ap.add_argument("--source", type=Path)
     args = ap.parse_args()
     if args.action == "graphs":
@@ -703,6 +770,8 @@ def main():
         print(json.dumps(predict_source(args.source.read_text(), tokenizer, filename=args.source.name), ensure_ascii=False))
     elif args.action == "smoke":
         smoke(tokenizer)
+    elif args.action == "audit-fill":
+        audit_fill(tokenizer)
     else:
         verified = json.loads((RESULTS / "smoke.json").read_text())
         if verified.get("joern_version") != joern_version() or verified.get("joern_quality", {}).keys() != set(SPLITS):

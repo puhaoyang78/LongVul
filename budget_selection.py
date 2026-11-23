@@ -5,7 +5,7 @@ from math import ceil, sqrt
 
 from compaction import BODY_BUDGET, REGIONS, choose_candidates, line_boundaries, region_edges
 from context_selection import BASE_QUOTAS, merge, occupied, prefer_context, related_statements, uniform_fill
-from dependence import EDGE_TYPES
+from dependence import EDGE_TYPES, physical_lines
 from repair_oracle import CONTEXT_TYPES, EDIT_TYPES, GAP_TYPES, reserve_blocks
 
 MAX_FRAGMENTS = 12
@@ -31,6 +31,25 @@ def physical_limits(boundaries):
     return list(zip(edges, edges[1:]))
 
 
+def completion_units(source):
+    """Project reliable AST units and original physical lines to simplified BPE."""
+    starts, ends = source.source_offsets.T
+    lines = physical_lines(source.code)
+    region_starts = [region.start for region in source.regions]
+    cuts = sorted({*starts.searchsorted(lines).tolist(), len(source.ids)})
+
+    def unit_at(position):
+        region = source.regions[bisect_right(region_starts, position)-1]
+        if region.kind == "statement" or (region.kind == "header" and not source.parse_error):
+            return region.span
+        line = bisect_right(lines, int(starts[position]))-1
+        lo = int(ends.searchsorted(lines[line], side="right"))
+        hi = int(starts.searchsorted(lines[line+1]))
+        return lo, hi
+
+    return cuts, unit_at
+
+
 def uniform(source, budget, cuts, parser=None):
     quota = (budget - REGIONS + 1) * BASE_QUOTAS[0] // BODY_BUDGET
     windows, limits = choose_candidates(cuts, alternatives=False, quotas=(quota,)*REGIONS)
@@ -38,7 +57,7 @@ def uniform(source, budget, cuts, parser=None):
     if parser is not None:
         links, _ = related_statements(source.code, source.source_offsets, range(len(source.ids)), spans, parser)
         spans = prefer_context(spans, links, budget=budget)
-    return uniform_fill(spans, cuts, limits, budget=budget)
+    return uniform_fill(spans, cuts, limits, budget=budget, contiguous=False), spans
 
 
 def repair_anchors(edits, budget):
@@ -187,7 +206,8 @@ def optimize(regions, base, seeds, graph, weights, budget, *, scores=None, bridg
     return chosen, additions
 
 
-def choose(source, method, budget, *, weights=(0, 0), edits=None, scores=None, graph=None, parser=None):
+def choose(source, method, budget, *, weights=(0, 0), edits=None, scores=None, graph=None, parser=None,
+           continuous_fill=False):
     """The deployable methods accept scores and source-only graphs, never edit annotations."""
     privileged = method.startswith("oracle_")
     if privileged != (edits is not None):
@@ -197,19 +217,20 @@ def choose(source, method, budget, *, weights=(0, 0), edits=None, scores=None, g
     n = len(source.ids)
     anchors = repair_anchors(edits, budget) if privileged else []
     if n <= budget:
-        return ([(0, n)] if n else []), anchors, 0
+        full = [(0, n)] if n else []
+        return full, anchors, 0, full
     lines = source.boundaries if source.boundary_budget == budget else line_boundaries(
         source.code, source.source_offsets, range(n), budget)
     if method in {"uniform", "syntax"}:
-        return uniform(source, budget, lines, parser if method == "syntax" else None), [], 0
+        packed, spans = uniform(source, budget, lines, parser if method == "syntax" else None)
+        return packed, [], 0, spans
+    steps = 0
     if method == "oracle_syntax":
         spans = anchors
         if anchors:
             links, _ = related_statements(source.code, source.source_offsets, range(n), anchors, parser)
             spans = prefer_context(anchors, {link for link in links if link[0] in CONTEXT_TYPES}, budget=budget)
-        return uniform_fill(spans, lines, physical_limits(lines), budget=budget), anchors, 0
-    steps = 0
-    if scores is not None:
+    elif scores is not None:
         base, candidates = global_regions(source, budget)
         seeds = predicted_candidates(source, candidates, scores, budget)
         spans, steps = optimize(source.regions, base, seeds, graph or {}, weights, budget, scores=scores)
@@ -220,5 +241,9 @@ def choose(source, method, budget, *, weights=(0, 0), edits=None, scores=None, g
         spans = anchors
     cuts = [0, *(region.end for region in source.regions)] if any(weights) or scores is not None else lines
     limit = max(MAX_FRAGMENTS, len(anchors)) if any(weights) or scores is not None else None
-    return uniform_fill(spans, cuts, physical_limits(lines), budget=budget,
-                        fragment_limit=limit), anchors, steps
+    unit_at = None
+    if continuous_fill:
+        cuts, unit_at = completion_units(source)
+    packed = uniform_fill(spans, cuts, physical_limits(lines), budget=budget, fragment_limit=limit,
+                          contiguous=continuous_fill, unit_at=unit_at)
+    return packed, anchors, steps, spans

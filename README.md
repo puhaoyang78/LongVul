@@ -29,7 +29,7 @@ LongVul 按函数长度建立最多六个空间区间，先保留各区可容纳
 | Oracle-Diff+PDG-Weighted | 在训练和完整验证集比较 `(1,1)`、`(1,2)`、`(2,1)`。Test 仅报告胜出配置及预先登记的等权对照。 |
 | Predicted Region / LongVul | 共享区域预测与全局覆盖，LongVul 加入按 Valid 选中的 PDG 权重。 |
 
-正式单函数预测写入后才计算 Test 的真实差异，用于保留率、定位器诊断和特权 Oracle。模型沿用原 UniXcoder-base-nine 的 1,026 行位置表和 RGCL 分类头。所有 1,024 位置分类器使用 BF16 autocast、FP32 参数、SDPA、函数级 BCE、LOSVERAdamW、16 轮、有效 batch 8 和学习率 2e-5。区域定位器和分类器各自保存最优权重。旧 512 实验仍可用原 `paired.py` 命令复现。
+正式单函数预测写入后才计算 Test 的真实差异，用于保留率、定位器诊断和特权 Oracle。模型沿用原 UniXcoder-base-nine 的 1,026 行位置表和 RGCL 分类头。所有 1,024 位置分类器使用 BF16 autocast、FP32 参数、SDPA、函数级 BCE、LOSVERAdamW、16 轮、有效 batch 8 和学习率 2e-5。区域定位器和分类器各自保存最优权重。`run` 和 `predict` 使用本轮检查点对应的填充策略。
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
@@ -68,7 +68,27 @@ LongVul 的整体 MCC 和两项 AUC 高于两个单函数基线。其 F1 低于�
 
 各长度组的 MCC、F1、ROC-AUC、PR-AUC，逐组的输入、依赖和耗时统计，以及配置、逐轮记录和逐样本预测位于 [`results/longvul1024/`](results/longvul1024)。本地检查点位于 `checkpoints/longvul1024/`。
 
+### 连续填充
+
+在正式实验收尾后，沿用仓库中的双向扩展实现。填充优先补全已选 AST 语句或控制头，边界不可靠时补全物理行。只在尚未覆盖的位置区间少量引入完整单元。其余预算轮流扩展现有片段，合并后的 BPE 与内部 SEP 按实际占用计算。已选实际修改、预测区和程序依赖范围均由区间并集保留。
+
+`longvul.py audit-fill` 使用相同 Test 样本、定位器、已选范围和 Joern 缓存比较两种填充。两组各 1,128 个函数均保留了填充前的全部区域，最大输入均为 1,024 位置。在 >1022 BPE 的 477 个函数上测得以下变化。正式分类结果来自原输入构造。[本轮正式实验版本](https://github.com/puhaoyang78/LongVul/commit/25af2a869d5434540ed049a294a24fd67f70b068)
+
+| 方法 | 平均片段数 | 平均片段长度 | 中位片段长度 | 内部 SEP 总数 | 原始 BPE 覆盖率 | 平均覆盖的源码四分区数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| LongVul | 8.85 → 8.65 | 112.56 → 115.25 | 59 → 70 | 3,745 → 3,647 | 25.505% → 25.513% | 3.99 → 3.99 |
+| Oracle-Diff+PDG-Weighted | 6.40 → 3.17 | 155.93 → 316.50 | 97 → 235 | 2,578 → 1,033 | 25.57% → 25.64% | 3.96 → 3.56 |
+
+长组实际修改 BPE 保留率在加权 Oracle 中为 81.66%（两种填充相同），在 LongVul 中从 44.85% 降至 44.63%。全 Test 中 LongVul 的成对输入碰撞从 13 增至 16，Oracle 维持 0。连续填充在本轮只做输入验证。详细分层、语句完整性和依赖覆盖见 [`continuous_fill.json`](results/longvul1024/continuous_fill.json)。
+
+```bash
+"$PYTHON" longvul.py audit-fill
+"$PYTHON" -m unittest discover -s tests -v
+```
+
 ## UniXcoder 修复区域 Oracle（特权信息）
+
+下文历史 UniXcoder 512 和 Oracle 结果使用当时的居中填充。复现这些结果时在历史版本运行所列命令。当前共享填充实现默认沿完整行单元扩展。[历史实验版本](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)
 
 **Train、Valid 和 Test 的 Oracle 输入都使用划分内的真实配对版本。** 表中的分数只描述该离线协议的实测表现。输入选择需要已知真实修复，常规单函数推理缺少这个条件。
 
