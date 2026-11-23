@@ -60,33 +60,73 @@ def gaps(spans, lo, hi):
 
 
 def uniform_fill(spans, boundaries, limits):
-    # Spend one share per source region on a centered window in its largest gap.
+    # Prefer complete source units and contiguous context over new center windows.
     spans = merge(spans)
-    for i, (left, right) in enumerate(limits):
-        quota = (BUDGET - occupied(spans)) // (len(limits) - i) - 1
-        if quota <= 0:
-            continue
-        lo, hi = max(gaps(spans, left, right), key=lambda p: p[1]-p[0], default=(left, left))
-        first, last = bisect_left(boundaries, lo), bisect_right(boundaries, hi) - 1
-        windows = aligned_windows(boundaries, first, last, (lo+hi)/2, quota)
-        best = max((candidate for candidate in windows if candidate[0][0] < candidate[0][1]),
-                   key=lambda candidate: candidate[1], default=None)
-        if best is not None:
-            spans = merge([*spans, best[0]])
+    if occupied(spans) > BUDGET:
+        raise ValueError("selected code exceeds the token budget")
 
-    # Spend line-rounding residue adjacent to retained source. Prefer an aligned
-    # edge whenever a complete line unit fits into the remaining budget.
+    def add(segment):
+        nonlocal spans
+        expanded = merge([*spans, segment])
+        if expanded == spans or occupied(expanded) > BUDGET:
+            return False
+        spans = expanded
+        return True
+
+    # Complete the boundary units of already selected code where they fit.
+    for start, end in tuple(spans):
+        i = bisect_left(boundaries, start)
+        if i > 0 and boundaries[i] != start:
+            add((boundaries[i - 1], start))
+        i = bisect_left(boundaries, end)
+        if i < len(boundaries) and boundaries[i] != end:
+            add((end, boundaries[i]))
+
+    # Retain at least one complete source unit in each uncovered quarter,
+    # subject to the remaining budget.
+    for left, right in limits:
+        if left >= right or any(start < right and end > left for start, end in spans):
+            continue
+        center = (left + right) / 2
+        i = bisect_left(boundaries, center)
+        candidates = sorted(
+            (j for j in (i - 1, i) if 0 <= j < len(boundaries) - 1
+             and left <= boundaries[j] and boundaries[j + 1] <= right),
+            key=lambda j: abs((boundaries[j] + boundaries[j + 1]) / 2 - center),
+        )
+        for j in candidates:
+            if add((boundaries[j], boundaries[j + 1])):
+                break
+
+    # Spend most of the remaining budget on complete units adjacent to
+    # retained code. Round-robin expansion avoids exhausting one fragment first.
+    while occupied(spans) < BUDGET:
+        changed = False
+        for start, end in tuple(spans):
+            left = bisect_left(boundaries, start) - 1
+            right = bisect_right(boundaries, end)
+            if left >= 0:
+                changed = add((boundaries[left], start)) or changed
+            if right < len(boundaries):
+                changed = add((end, boundaries[right])) or changed
+            if occupied(spans) == BUDGET:
+                break
+        if not changed:
+            break
+
+    # Only a small remainder may require splitting a line unit. Extend an
+    # existing fragment instead of introducing another disconnected fragment.
     while (room := BUDGET - occupied(spans)) > 0:
-        left, right = max(gaps(spans, 0, boundaries[-1]), key=lambda p: p[1]-p[0])
-        if left:
-            cap = min(left+room, right)
-            edge = boundaries[bisect_right(boundaries, cap)-1]
-            span = (left, edge if edge > left else cap)
-        else:
-            cap = max(left, right-room)
-            edge = boundaries[bisect_left(boundaries, cap)]
-            span = (edge if edge < right else cap, right)
-        spans = merge([*spans, span])
+        expanded = False
+        for start, end in tuple(spans):
+            if start > 0 and add((max(0, start - room), start)):
+                expanded = True
+                break
+            if end < boundaries[-1] and add((end, min(boundaries[-1], end + room))):
+                expanded = True
+                break
+        if not expanded:
+            raise ValueError("unable to fill available input budget")
     return spans
 
 
