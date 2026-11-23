@@ -1,0 +1,267 @@
+{
+  "config": {
+    "method": "oracle_ddg",
+    "seed": 42,
+    "epochs": 16,
+    "batch_size": 8,
+    "micro_batch": 8,
+    "length": 1024,
+    "lr": 2e-05,
+    "eps": 1e-08,
+    "optimizer": "LOSVERAdamW",
+    "weight_decay": 0.0,
+    "warmup": 0.1,
+    "grad_clip": 1.0,
+    "precision": "BF16 autocast, FP32 parameters, SDPA",
+    "model_id": "microsoft/unixcoder-base-nine",
+    "model_revision": "5f0dc256eb0904af496d427451da5d7f90261676",
+    "split_functions": {
+      "train": 8708,
+      "valid": 1124,
+      "test": 1128
+    },
+    "loss": "independent function BCE",
+    "checkpoint": "full validation MCC; earliest tie",
+    "threshold": 0.5,
+    "comparison": ">",
+    "privileged_test": true,
+    "ddg_cdg_weights": [
+      1,
+      0
+    ],
+    "edge_hops": 1,
+    "bridge_bpe": 8,
+    "fragment_limit": 12,
+    "new_fragment_cost": 8,
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "cuda": "12.8",
+    "python": "3.11.14",
+    "torch": "2.9.1+cu128",
+    "transformers": "4.57.3",
+    "joern": "4.0.465",
+    "missing_graph_policy": "same anchors and uniform fill; require all requested native relation types"
+  },
+  "epoch": 3,
+  "groups": {
+    "overall": {
+      "accuracy": 0.5071174377224199,
+      "precision": 0.6176470588235294,
+      "recall": 0.037366548042704624,
+      "f1": 0.0704697986577181,
+      "mcc": 0.04155633891275343,
+      "auc": 0.5580318131735921,
+      "auprc": 0.5479265279656942,
+      "tp": 21,
+      "tn": 549,
+      "fp": 13,
+      "fn": 541,
+      "confusion_matrix": [
+        [
+          549,
+          13
+        ],
+        [
+          541,
+          21
+        ]
+      ],
+      "samples": 1124,
+      "threshold": 0.5
+    },
+    "long": {
+      "accuracy": 0.5081967213114754,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "mcc": 0.0,
+      "auc": 0.5523104949791167,
+      "auprc": 0.5425342822596638,
+      "tp": 0,
+      "tn": 341,
+      "fp": 0,
+      "fn": 330,
+      "confusion_matrix": [
+        [
+          341,
+          0
+        ],
+        [
+          330,
+          0
+        ]
+      ],
+      "samples": 671,
+      "threshold": 0.5
+    },
+    "short": {
+      "accuracy": 0.5055187637969095,
+      "precision": 0.6176470588235294,
+      "recall": 0.09051724137931035,
+      "f1": 0.15789473684210525,
+      "mcc": 0.06012661657007131,
+      "auc": 0.5641675768450616,
+      "auprc": 0.5633028188121221,
+      "tp": 21,
+      "tn": 208,
+      "fp": 13,
+      "fn": 211,
+      "confusion_matrix": [
+        [
+          208,
+          13
+        ],
+        [
+          211,
+          21
+        ]
+      ],
+      "samples": 453,
+      "threshold": 0.5
+    },
+    "511-1020": {
+      "accuracy": 0.5107296137339056,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "mcc": 0.0,
+      "auc": 0.5722025652366209,
+      "auprc": 0.5535569901211066,
+      "tp": 0,
+      "tn": 119,
+      "fp": 0,
+      "fn": 114,
+      "confusion_matrix": [
+        [
+          119,
+          0
+        ],
+        [
+          114,
+          0
+        ]
+      ],
+      "samples": 233,
+      "threshold": 0.5
+    },
+    "1021-2040": {
+      "accuracy": 0.5067264573991032,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "mcc": 0.0,
+      "auc": 0.5222043443282381,
+      "auprc": 0.5495100219081737,
+      "tp": 0,
+      "tn": 113,
+      "fp": 0,
+      "fn": 110,
+      "confusion_matrix": [
+        [
+          113,
+          0
+        ],
+        [
+          110,
+          0
+        ]
+      ],
+      "samples": 223,
+      "threshold": 0.5
+    },
+    "2041+": {
+      "accuracy": 0.5069767441860465,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "mcc": 0.0,
+      "auc": 0.5574259996537996,
+      "auprc": 0.5464057621734152,
+      "tp": 0,
+      "tn": 109,
+      "fp": 0,
+      "fn": 106,
+      "confusion_matrix": [
+        [
+          109,
+          0
+        ],
+        [
+          106,
+          0
+        ]
+      ],
+      "samples": 215,
+      "threshold": 0.5
+    },
+    "le1022": {
+      "accuracy": 0.5072886297376094,
+      "precision": 0.6176470588235294,
+      "recall": 0.06069364161849711,
+      "f1": 0.11052631578947368,
+      "mcc": 0.0517359048221311,
+      "auc": 0.5663337300238014,
+      "auprc": 0.556274715148501,
+      "tp": 21,
+      "tn": 327,
+      "fp": 13,
+      "fn": 325,
+      "confusion_matrix": [
+        [
+          327,
+          13
+        ],
+        [
+          325,
+          21
+        ]
+      ],
+      "samples": 686,
+      "threshold": 0.5
+    },
+    "gt1022": {
+      "accuracy": 0.5068493150684932,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "mcc": 0.0,
+      "auc": 0.541916916916917,
+      "auprc": 0.5409013214856514,
+      "tp": 0,
+      "tn": 222,
+      "fp": 0,
+      "fn": 216,
+      "confusion_matrix": [
+        [
+          222,
+          0
+        ],
+        [
+          216,
+          0
+        ]
+      ],
+      "samples": 438,
+      "threshold": 0.5
+    }
+  },
+  "inference_seconds": 2.792369475995656,
+  "peak_inference_allocated_bytes": 949834752,
+  "training_seconds": 1875.8866646979586,
+  "peak_training_allocated_bytes": 5334548992,
+  "selection_seconds": {
+    "train": 41.69788305100519,
+    "valid": 4.098265722976066
+  },
+  "dependency_status": {
+    "train": {
+      "available": 7920,
+      "no_effective_dependence": 166,
+      "parse_or_graph_failed": 622
+    },
+    "valid": {
+      "no_effective_dependence": 15,
+      "available": 983,
+      "parse_or_graph_failed": 126
+    }
+  }
+}

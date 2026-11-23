@@ -1,0 +1,42 @@
+{
+  "method": "oracle_pdg_1_2",
+  "seed": 42,
+  "epochs": 16,
+  "batch_size": 8,
+  "micro_batch": 8,
+  "length": 1024,
+  "lr": 2e-05,
+  "eps": 1e-08,
+  "optimizer": "LOSVERAdamW",
+  "weight_decay": 0.0,
+  "warmup": 0.1,
+  "grad_clip": 1.0,
+  "precision": "BF16 autocast, FP32 parameters, SDPA",
+  "model_id": "microsoft/unixcoder-base-nine",
+  "model_revision": "5f0dc256eb0904af496d427451da5d7f90261676",
+  "split_functions": {
+    "train": 8708,
+    "valid": 1124,
+    "test": 1128
+  },
+  "loss": "independent function BCE",
+  "checkpoint": "full validation MCC; earliest tie",
+  "threshold": 0.5,
+  "comparison": ">",
+  "privileged_test": true,
+  "ddg_cdg_weights": [
+    1,
+    2
+  ],
+  "edge_hops": 1,
+  "bridge_bpe": 8,
+  "fragment_limit": 12,
+  "new_fragment_cost": 8,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "cuda": "12.8",
+  "python": "3.11.14",
+  "torch": "2.9.1+cu128",
+  "transformers": "4.57.3",
+  "joern": "4.0.465",
+  "missing_graph_policy": "same anchors and uniform fill; require all requested native relation types"
+}

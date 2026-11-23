@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import transformers
 from torch.utils.data import DataLoader
-from transformers import get_linear_schedule_with_warmup, set_seed
+from transformers import AutoConfig, RobertaModel, get_linear_schedule_with_warmup, set_seed
 
 import context_selection as context
 import repair_oracle as repair
@@ -25,7 +25,7 @@ from rgcl.artifacts import write_json
 from rgcl.config import ADAM_EPSILON, BACKBONES, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, WARMUP_FRACTION
 from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
-from rgcl.model import build_model, load_tokenizer
+from rgcl.model import Detector, build_model, load_tokenizer
 from rgcl.training import LOSVERAdamW, load_training_state, restore_rng, save_training_state
 
 SEED = 42
@@ -40,10 +40,20 @@ ORACLE_WEIGHTS = ROOT / "checkpoints" / "unixcoder_repair_oracle"
 UNIX_METHODS = (*context.METHODS, *repair.METHODS)
 
 
-def make_model(tokenizer, method):
+def make_model(tokenizer, method, *, long_input=False, pretrained=True):
     select_windows, use_positions = METHODS.get(method, (False, False))
-    backbone, source = ("unixcoder", UNIX_BASE) if method in UNIX_METHODS else ("codebert", BASE)
-    base = build_model(backbone, "plm_classifier", model_source=source)
+    backbone, source = ("unixcoder", UNIX_BASE) if long_input or method in UNIX_METHODS else ("codebert", BASE)
+    if long_input:
+        config = AutoConfig.from_pretrained(source, local_files_only=True)
+        config._attn_implementation = "sdpa"
+        encoder = (RobertaModel.from_pretrained(source, config=config, add_pooling_layer=False,
+                                                attn_implementation="sdpa", local_files_only=True)
+                   if pretrained else RobertaModel(config, add_pooling_layer=False))
+        if type(encoder.encoder.layer[0].attention.self).__name__ != "RobertaSdpaSelfAttention":
+            raise ValueError("1024-position UniXcoder did not initialize its SDPA attention")
+        base = Detector(encoder, config, "plm_classifier", 1.)
+    else:
+        base = build_model(backbone, "plm_classifier", model_source=source, pretrained=pretrained)
     return CompactionClassifier(base, tokenizer, select_windows=select_windows, use_positions=use_positions).cuda()
 
 
@@ -52,19 +62,24 @@ def to_gpu(batch, *, labels=False):
             for k, v in batch.items() if labels or k != "labels"}
 
 
-def train_epoch(model, loader, optimizer, scheduler):
+def train_epoch(model, loader, optimizer, scheduler, *, bf16=False):
     model.train()
     losses, gradients = [], []
     selector = list(model.conv.parameters()) + list(model.scorer.parameters()) if model.scorer is not None else []
-    for batch in loader:
-        loss = model(to_gpu(batch, labels=True))["loss"]
-        loss.backward()
+    accumulation = BATCH_SIZE // loader.batch_size
+    for i, batch in enumerate(loader):
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
+            loss = model(to_gpu(batch, labels=True))["loss"]
+        group_first = i//accumulation * BATCH_SIZE
+        group_size = min(BATCH_SIZE, len(loader.dataset)-group_first)
+        (loss * (len(batch["labels"])/group_size)).backward()
         if "bank" in batch:
             gradients.append(torch.linalg.vector_norm(torch.stack([p.grad.detach().norm() for p in selector])))
-        torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM, error_if_nonfinite=True)
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
-        scheduler.step()
+        if (i+1) % accumulation == 0 or i+1 == len(loader):
+            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM, error_if_nonfinite=True)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            scheduler.step()
         losses.append(loss.detach())
     result = dict(train_loss=torch.stack(losses).mean().item())
     if gradients:
@@ -75,12 +90,14 @@ def train_epoch(model, loader, optimizer, scheduler):
 
 
 @torch.inference_mode()
-def predict(model, loader, *, trace=False):
+def predict(model, loader, *, trace=False, bf16=False):
     model.eval()
     scores, traces = [], []
     for batch in loader:
-        report = model(to_gpu(batch), details=trace)
-        scores.extend(report["probability"].tolist())
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
+            report = model(to_gpu(batch), details=trace)
+        probability = report["logits"].float().sigmoid() if bf16 else report["probability"]
+        scores.extend(probability.tolist())
         if trace:
             vectors = [report[k].tolist() for k in ("input_lengths", "spans", "choices")]
             traces.extend(zip(*vectors, strict=True))
@@ -352,6 +369,52 @@ def measure_data(split, tokenizer, method, *, analyze=False):
     return data, perf_counter()-start
 
 
+def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BATCH_SIZE, bf16=False, collator=collate):
+    if micro_batch <= 0 or BATCH_SIZE % micro_batch:
+        raise ValueError("Micro-batch must divide the effective batch size")
+    weights.mkdir(parents=True, exist_ok=True)
+    train_loader = DataLoader(train, batch_size=micro_batch, shuffle=True, collate_fn=collator)
+    valid_loader = DataLoader(valid, batch_size=micro_batch, collate_fn=collator)
+    optimizer = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
+    per_epoch = math.ceil(len(train) / BATCH_SIZE)
+    steps = per_epoch * EPOCHS
+    schedule = get_linear_schedule_with_warmup(optimizer, steps*WARMUP_FRACTION, steps)
+    write_json(root / "config.json", config)
+    history = []
+    if (weights / "last.pt").exists():
+        history, rng = load_training_state(weights, model, optimizer, config, scheduler=schedule)
+        restore_rng(rng)
+    best = max((row["validation"]["mcc"] for row in history), default=-math.inf)
+    for epoch in range(len(history)+1, EPOCHS+1):
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        start = perf_counter()
+        train_stats = train_epoch(model, train_loader, optimizer, schedule, bf16=bf16)
+        seconds, peak = perf_counter()-start, torch.cuda.max_memory_allocated()
+        start = perf_counter()
+        scores, _ = predict(model, valid_loader, bf16=bf16)
+        valid_seconds = perf_counter()-start
+        validation = metrics(valid.targets.tolist(), scores)
+        if validation["mcc"] > best:
+            best = validation["mcc"]
+            temporary = weights / "best.tmp"
+            torch.save(model.state_dict(), temporary)
+            temporary.replace(weights / "best.pt")
+        history.append(dict(epoch=epoch, optimizer_steps=per_epoch, **train_stats,
+                            peak_allocated_bytes=peak, validation=validation,
+                            training_seconds=seconds, validation_seconds=valid_seconds))
+        save_training_state(weights, model, optimizer, config, history, scheduler=schedule)
+        write_json(root / "epochs.json", history)
+        print(root.name, epoch, f"loss={train_stats['train_loss']:.5f} valid_mcc={validation['mcc']:.4f} train_s={seconds:.1f}",
+              flush=True)
+    del optimizer, schedule
+    # Checkpoint serialization can retain CUDA optimizer tensors in cycles.
+    gc.collect()
+    selected = max(history, key=lambda r: r["validation"]["mcc"])
+    model.load_state_dict(torch.load(weights / "best.pt", weights_only=True, map_location="cpu"), strict=True)
+    return selected, history
+
+
 def run(method, tokenizer):
     unixcoder = method in UNIX_METHODS
     privileged = method in repair.METHODS
@@ -366,11 +429,6 @@ def run(method, tokenizer):
     use_selection, use_positions = METHODS.get(method, (False, False))
     train, train_prep = measure_data("train", tokenizer, method)
     valid, valid_prep = measure_data("valid", tokenizer, method)
-    train_loader = DataLoader(train, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate)
-    valid_loader = DataLoader(valid, batch_size=BATCH_SIZE, collate_fn=collate)
-    optimizer = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
-    steps = len(train_loader) * EPOCHS
-    schedule = get_linear_schedule_with_warmup(optimizer, steps*WARMUP_FRACTION, steps)
     config = dict(method=method, seed=SEED, epochs=EPOCHS, batch_size=BATCH_SIZE, length=MAX_LENGTH,
                   lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="LOSVERAdamW", weight_decay=0.,
                   warmup=WARMUP_FRACTION, grad_clip=MAX_GRAD_NORM, precision="fp32 eager",
@@ -396,39 +454,7 @@ def run(method, tokenizer):
                   gumbel_temperature=TEMPERATURE if use_selection else None,
                   source_position_bins=POSITION_BINS if use_positions else None,
                   distance_bins=DISTANCE_BINS if use_positions else None)
-    write_json(root / "config.json", config)
-    history = []
-    if (weights / "last.pt").exists():
-        history, rng = load_training_state(weights, model, optimizer, config, scheduler=schedule)
-        restore_rng(rng)
-    best = max((row["validation"]["mcc"] for row in history), default=-math.inf)
-    for epoch in range(len(history)+1, EPOCHS+1):
-        torch.cuda.synchronize()
-        torch.cuda.reset_peak_memory_stats()
-        start = perf_counter()
-        train_stats = train_epoch(model, train_loader, optimizer, schedule)
-        seconds, peak = perf_counter()-start, torch.cuda.max_memory_allocated()
-        start = perf_counter()
-        scores, _ = predict(model, valid_loader)
-        valid_seconds = perf_counter()-start
-        validation = metrics(valid.targets.tolist(), scores)
-        if validation["mcc"] > best:
-            best = validation["mcc"]
-            temporary = weights / "best.tmp"
-            torch.save(model.state_dict(), temporary)
-            temporary.replace(weights / "best.pt")
-        history.append(dict(epoch=epoch, optimizer_steps=len(train_loader), **train_stats,
-                            peak_allocated_bytes=peak, validation=validation,
-                            training_seconds=seconds, validation_seconds=valid_seconds))
-        save_training_state(weights, model, optimizer, config, history, scheduler=schedule)
-        write_json(root / "epochs.json", history)
-        print(method, epoch, f"loss={train_stats['train_loss']:.5f} valid_mcc={validation['mcc']:.4f} train_s={seconds:.1f}",
-              flush=True)
-    del optimizer, schedule
-    # Checkpoint serialization can retain CUDA optimizer tensors in cycles.
-    gc.collect()
-    selected = max(history, key=lambda r: r["validation"]["mcc"])
-    model.load_state_dict(torch.load(weights / "best.pt", weights_only=True, map_location="cpu"), strict=True)
+    selected, history = fit_classifier(model, train, valid, weights, root, config)
     test, test_prep = measure_data("test", tokenizer, method)
     result = dict(config=config, selected_epoch=selected["epoch"],
                   training_seconds=sum(row["training_seconds"] for row in history),

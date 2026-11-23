@@ -59,11 +59,11 @@ def gaps(spans, lo, hi):
         yield lo, hi
 
 
-def uniform_fill(spans, boundaries, limits):
+def uniform_fill(spans, boundaries, limits, *, budget=BUDGET, fragment_limit=None):
     # Spend one share per source region on a centered window in its largest gap.
     spans = merge(spans)
     for i, (left, right) in enumerate(limits):
-        quota = (BUDGET - occupied(spans)) // (len(limits) - i) - 1
+        quota = (budget - occupied(spans)) // (len(limits) - i) - 1
         if quota <= 0:
             continue
         lo, hi = max(gaps(spans, left, right), key=lambda p: p[1]-p[0], default=(left, left))
@@ -72,11 +72,13 @@ def uniform_fill(spans, boundaries, limits):
         best = max((candidate for candidate in windows if candidate[0][0] < candidate[0][1]),
                    key=lambda candidate: candidate[1], default=None)
         if best is not None:
-            spans = merge([*spans, best[0]])
+            augmented = merge([*spans, best[0]])
+            if fragment_limit is None or len(augmented) <= fragment_limit:
+                spans = augmented
 
     # Spend line-rounding residue adjacent to retained source. Prefer an aligned
     # edge whenever a complete line unit fits into the remaining budget.
-    while (room := BUDGET - occupied(spans)) > 0:
+    while (room := budget - occupied(spans)) > 0:
         left, right = max(gaps(spans, 0, boundaries[-1]), key=lambda p: p[1]-p[0])
         if left:
             cap = min(left+room, right)
@@ -116,7 +118,7 @@ def control_header(node):
 
 
 def related_statements(code, offsets, keep, base, parser):
-    """Find links from the four base windows on this function alone."""
+    """Find syntax links from retained regions of this function alone."""
     source = code.encode("utf-8")
     root = parser.parse(source).root_node
     if len(source) == len(code):
@@ -208,7 +210,7 @@ def related_statements(code, offsets, keep, base, parser):
     return {link for link in links if link[2][0] < link[2][1] and not contains(link[2], base)}, root.has_error
 
 
-def prefer_context(base, links):
+def prefer_context(base, links, *, budget=BUDGET):
     weights = Counter()
     for kind, _, span in links:
         weights[span] += RELATED_WEIGHTS[kind]
@@ -220,7 +222,7 @@ def prefer_context(base, links):
         if contains(span, spans):
             continue
         extended = merge([*spans, span])
-        if occupied(extended) <= BUDGET:
+        if occupied(extended) <= budget:
             spans = extended
     return spans
 

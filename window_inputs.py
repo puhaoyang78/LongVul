@@ -119,11 +119,11 @@ class WindowData:
         return torch.cat(inputs), torch.tensor(lengths), counts
 
 
-def grouped_metrics(data, scores):
+def grouped_metrics(data, scores, groups=GROUPS):
     targets = data.targets.tolist()
     lengths = np.array([row["original_bpe"] for row in data.metadata])
     result = {}
-    for name, (lo, hi) in GROUPS.items():
+    for name, (lo, hi) in groups.items():
         indices = np.flatnonzero((lo <= lengths) & (lengths <= hi))
         result[name] = metrics([targets[i] for i in indices], [scores[i] for i in indices])
     return result

@@ -52,14 +52,14 @@ def map_edits(lines, offsets, edits, side):
     return {kind: merge(spans) for kind, spans in mapped.items()}
 
 
-def reserve_blocks(base, blocks):
+def reserve_blocks(base, blocks, *, budget=BUDGET):
     """Fit source blocks, sharing an overflowing budget across their locations."""
     combined = merge([*base, *blocks])
-    if occupied(combined) <= BUDGET:
+    if occupied(combined) <= budget:
         return combined
 
     blocks = [chunk for start, end in merge(blocks) for chunk in gaps(base, start, end)]
-    room = BUDGET - occupied(base)
+    room = budget - occupied(base)
     count = min(len(blocks), (room + int(not base))//2)
     if count == 0:
         return base

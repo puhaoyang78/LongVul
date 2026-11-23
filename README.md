@@ -2,6 +2,72 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。采用种子 42、验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## LongVul 1024
+
+正式 LongVul 从单个原始函数生成输入。历史配对差异监督区域定位器，定位器的预测与 Joern 原生程序依赖共同决定保留哪些代码。显式标注的 Oracle 对照在所有划分使用真实配对版本，其结果仅适用于特权信息协议。
+
+### 源码、区域与依赖
+
+1. Tree-sitter C++ 提供注释、字面量和语句边界。删除普通注释的内容，保留分隔空格和物理换行。普通行去掉行首、行尾和多余水平空白。保留字面量、可能含预处理指令的整行，以及含换行续接或字面量无法确认的整个函数。每个简化字符保留原字符坐标，合成空格另外标记。用同一 UniXcoder 分别计原始与简化后的 BPE。实际修改保留率的分母使用原始 BPE，只有原字符范围完整可见的原始 token 才进入分子。
+2. 区域以完整语句、控制头、函数头和按行分割的其余连续源码组成。定位器把每个区域的全部 BPE 按顺序放入四个词向量均值池，以冻结的 UniXcoder 输入词表、小型卷积和区域分类头输出预测分数。训练信号是区域与历史实际修改行或空侧邻近行的重叠。定位器使用类加权区域 BCE，在完整 Valid 上按区域 AP 选模。分数代表预测的修复相关性。
+3. 用本机 Joern 4.0.465、Java 21 和 NEWC 对原始函数批量构图。PrimeVul_original 配对记录缺少原始文件路径、语言字段和编译数据库。单函数入口优先用已知扩展名，其余函数使用明确的 C++ 语法特征区分 C++，其余按 C 解析。C2CPG 按输入扩展名选择 CDT 解析器。原始函数中省略返回类型的 C 代码可在 C 方言下解析。[C2CPG 方言选择](https://github.com/joernio/joern/blob/v4.0.465/joern-cli/frontends/c2cpg/src/main/scala/io/joern/c2cpg/parser/CdtParser.scala)
+4. 使用 `--log-problems --log-preprocessor --enable-file-content` 和 `SL_LOGGING_LEVEL=INFO`。通过导出检查 CFG 和 dataflow overlay，按文件、位置与 Joern `CODE` 前缀定位定义。读取 `REACHING_DEF` 与 `CDG`，先映射原始语句再映射简化 BPE。表达式直接坐标无法验证时，仅在明确的 Joern 表达式 AST 归属下映射。缺失端点与重复语句级边分别记录。仅选择一跳上游依赖。LLMxCPG 的实现用 Joern 节点 ID 和原始行号回查源码。LongVul 沿用原文回查思路并检查列号，区分同一行的多个语句。[Joern 导出](https://docs.joern.io/export/) · [CPG 规范](https://cpg.joern.io/#pdg) · [LLMxCPG 定位实现](https://github.com/qcri/llmxcpg/blob/fd7af0df8d2221ec196b85bc460da5cb40f6866c/queries/Components/joern_manager.py#L204)
+
+每个普通批次最多 128 个文件和约 1 MB 源码，超过 128 KiB 的单个函数隔离。保留 Joern 默认的 4,000 定义数据流上限。批次、文件、CFG 完整性、原生边可用性和映射计数分别统计。DDG 和 CDG 单项分别要求对应类型有可用映射，PDG 同时要求两类。在构图失败或缺少所需映射时，Oracle 使用原修改区与均匀补充，LongVul 使用原预测区域及全局覆盖与均匀补充。逐组记录依赖可用、无有效依赖和构图或匹配失败。全部样本参与原划分的评价，另报告 DDG 和 CDG 都有有效边的共同样本。[Joern 定义上限](https://github.com/joernio/joern/blob/v4.0.465/joern-cli/src/main/scala/io/joern/joerncli/DefaultOverlays.scala)
+
+### 预算与对照
+
+所有输入最多 1,024 位置。原始版本的相对顺序由简化序列中的区间保持，CLS、末尾 EOS 和区间间的 EOS 都计入实际长度。短函数保留全部简化正文。Oracle 共享相同真实修改区和空侧锚点，补充动作保留已选锚点。Predicted Region 与 LongVul 在 Train、Valid、Test 均用同一个冻结定位器的预测。
+
+LongVul 按函数长度建立最多六个空间区间，先保留各区可容纳的完整代表区域，再让区域相关性、空间距离和一跳边收益共同争取剩余预算。每次比较单个区域和一跳两端同时加入的增量，重新计算两端新增完整可见的唯一 DDG/CDG 边和实际新增位置。距离不超过 8 个 BPE 的间隔可并成一个片段。每增加一个片段在排序代价中计 8 个 BPE 等价成本，实际预算仍以打包 token 为准。片段上限为 12，Oracle 若有超过 12 个已保留的修改片段，则以上限为其锚点片段数。全局覆盖按完整区域的实际大小分配。
+
+| 对照 | 输入选择 |
+| --- | --- |
+| Uniform Sampling / Context-Aware Selection | 同预算的空间均匀基线和原语法关联基线，共用简化与评价。 |
+| Oracle-Diff / Oracle-Diff+Syntax | 共享真实修复锚点，分别补充均匀窗口或条件、声明、赋值。 |
+| Oracle-Diff+DDG / CDG / PDG | 共享锚点，分别用 `(1,0)`、`(0,1)`、`(1,1)` 的原生边权。 |
+| Oracle-Diff+PDG-Weighted | 在训练和完整验证集比较 `(1,1)`、`(1,2)`、`(2,1)`。Test 仅报告胜出配置及预先登记的等权对照。 |
+| Predicted Region / LongVul | 共享区域预测与全局覆盖，LongVul 加入按 Valid 选中的 PDG 权重。 |
+
+正式单函数预测写入后才计算 Test 的真实差异，用于保留率、定位器诊断和特权 Oracle。模型沿用原 UniXcoder-base-nine 的 1,026 行位置表和 RGCL 分类头。所有 1,024 位置分类器使用 BF16 autocast、FP32 参数、SDPA、函数级 BCE、LOSVERAdamW、16 轮、有效 batch 8 和学习率 2e-5。区域定位器和分类器各自保存最优权重。旧 512 实验仍可用原 `paired.py` 命令复现。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" longvul.py smoke
+"$PYTHON" longvul.py run
+"$PYTHON" longvul.py predict --source function.cpp
+```
+
+### PrimeVul_original 正式结果
+
+种子 42 的 11 组分类器均完成 16 轮。表中的长组按原始 BPE 计，共 477 个函数，其中 396 个在简化后仍需选择。Oracle 行使用 Test 的真实修复版本。
+
+| 方法 | 整体 MCC | 整体 F1 | ROC-AUC | PR-AUC | >1022 MCC | >1022 F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Uniform Sampling | 0.0426 | 0.3978 | 0.5206 | 0.5274 | 0.0000 | 0.0000 |
+| Context-Aware Selection | 0.0621 | 0.5404 | 0.5519 | 0.5593 | 0.0423 | 0.5483 |
+| Predicted Region | 0.0496 | 0.5240 | 0.5451 | 0.5458 | 0.0016 | 0.4893 |
+| LongVul | 0.0728 | 0.3473 | 0.5684 | 0.5636 | 0.0246 | 0.2109 |
+| Oracle-Diff | 0.1242 | 0.5542 | 0.5841 | 0.5743 | 0.1397 | 0.5372 |
+| Oracle-Diff+Syntax | 0.1083 | 0.5431 | 0.5719 | 0.5679 | 0.0983 | 0.5416 |
+| Oracle-Diff+DDG | 0.0403 | 0.0733 | 0.5532 | 0.5507 | 0.0000 | 0.0000 |
+| Oracle-Diff+CDG | 0.0941 | 0.6171 | 0.5737 | 0.5658 | 0.0393 | 0.5868 |
+| Oracle-Diff+PDG (1:1) | 0.0421 | 0.0071 | 0.5068 | 0.5109 | 0.0000 | 0.0000 |
+| Oracle-Diff+PDG-Weighted (2:1) | 0.1137 | 0.5712 | 0.5787 | 0.5595 | 0.0695 | 0.5356 |
+
+LongVul 的整体 MCC 和两项 AUC 高于两个单函数基线。其 F1 低于两个基线，长组 MCC 低于 Context-Aware，≥2041 BPE 组 MCC 为 −0.0063。这次单种子结果未显示长函数上有一致的检测增益。完整 Valid 选择了 2:1，MCC 为 0.1360，另两组 1:2 和 1:1 分别为 0.1336 和 0.0299。加权组在 Test 上高于等权组，但在长组低于 Oracle-Diff 与 Oracle-Diff+Syntax。
+
+### 区域、输入和计算成本
+
+- 在 Test 上，源码简化节省 329,043 个 BPE（16.0%）。仅改变选择预算时，>1022 BPE 组的原始修改 BPE 保留率从 512 到 1024 分别为 Uniform 22.3% → 44.7%、Context-Aware 20.5% → 43.2%、Oracle-Diff 77.0% → 81.7%、Predicted Region 24.4% → 47.6%、LongVul 22.6% → 44.9%。这一比较使用相同简化源码和定位器，测量输入保留率。
+- 定位器在 Train、Valid、Test 的区域 AP 分别为 0.1373、0.0699、0.0511。每个 Test 函数的前五区域合计命中 8.1% 的正区域，有至少一个命中的函数占 44.7%。标签来自历史修改和空侧邻近区域。
+- 在 1,128 个 Test 函数中，990 个有通过检查的目标函数和 CFG，976 个有可用 DDG，932 个有可用 CDG，928 个两类都可用。PDG 组有 62 个函数缺少要求的有效依赖，另有 138 个目标函数未匹配或位置无法验证。所有函数均纳入总体评价。共同具有两类依赖且简化后仍需选择的 311 个函数上，Oracle-Diff、Oracle-Diff+Syntax 和加权 PDG 的 MCC 分别为 0.1187、0.1380、0.0865。
+- 对 >1022 BPE 的函数，LongVul 相比 Predicted Region 保留了更多两端可见的 DDG（103,102 对 60,393）和 CDG（22,181 对 17,544）。每函数平均片段数为 8.85 对 8.96，Context-Aware 为 18.14。片段长度中位数分别为 59、61、13 BPE。全 Test 中 LongVul 有 13/564 对输入相同，Uniform 有 11/564 对，全部 Oracle 对照为 0/564 对。
+- 训练集到测试集的 Joern 构图与导出分别耗时 3,635.6、344.1、397.9 秒，源码映射另耗时 150.7、14.6、19.4 秒。Test 源码分析、简化、分词和区域映射共 32.1 秒，定位器评分 2.03 秒，LongVul 联合选择 353.31 秒，UniXcoder 推理 2.77 秒。LongVul 的训练集选择耗时 2,984.72 秒，分类器优化用时 31.13 分钟，训练与推理峰值分别为 4.97、0.88 GiB。
+
+各长度组的 MCC、F1、ROC-AUC、PR-AUC，逐组的输入、依赖和耗时统计，以及配置、逐轮记录和逐样本预测位于 [`results/longvul1024/`](results/longvul1024)。本地检查点位于 `checkpoints/longvul1024/`。
+
 ## UniXcoder 修复区域 Oracle（特权信息）
 
 **Train、Valid 和 Test 的 Oracle 输入都使用划分内的真实配对版本。** 表中的分数只描述该离线协议的实测表现。输入选择需要已知真实修复，常规单函数推理缺少这个条件。

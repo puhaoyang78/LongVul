@@ -103,7 +103,7 @@ class CompactionClassifier(nn.Module):
                 residual = delta.gather(1, order[..., None].expand(-1, -1, table.embedding_dim))
                 residual = residual.masked_fill(new_pos.lt(0)[..., None], 0.)
 
-        attention = torch.arange(MAX_LENGTH, device=ids.device)[None, :].lt(lengths[:, None]).long()
+        attention = torch.arange(ids.shape[1], device=ids.device)[None, :].lt(lengths[:, None]).long()
         if self.position is None and residual is None:
             result = self.detector(ids, attention, None, None, labels=batch.get("labels"))
         else:

@@ -38,9 +38,12 @@ def line_layout(code, ids, offsets):
     n = len(keep)
     if n <= BUDGET:
         return keep, [0, n]
+    return keep, line_boundaries(code, offsets, keep, BUDGET)
 
+
+def line_boundaries(code, offsets, keep, budget):
     boundaries = [0]
-    unit_limit = BODY_BUDGET // 8
+    unit_limit = max(8, (budget - (REGIONS - 1)) // 8)
     last_space = 0
     for j, i in enumerate(keep):
         s, e = offsets[i]
@@ -52,9 +55,9 @@ def line_layout(code, ids, offsets):
             boundaries.append(cut)
         if "\n" in piece:
             boundaries.append(j + 1)
-    if boundaries[-1] != n:
-        boundaries.append(n)
-    return keep, boundaries
+    if boundaries[-1] != len(keep):
+        boundaries.append(len(keep))
+    return boundaries
 
 
 def aligned_windows(boundaries, lo, hi, center, quota):
@@ -105,7 +108,7 @@ def choose_candidates(boundaries, *, alternatives, quotas=QUOTAS):
     return windows, limits
 
 
-def pack_fixed(ids, keep, spans, tokenizer):
+def pack_fixed(ids, keep, spans, tokenizer, *, max_length=MAX_LENGTH):
     fixed_ids = [tokenizer.cls_token_id]
     fixed_positions, fixed_parts = [-1], [0]
     previous_end = None
@@ -125,9 +128,9 @@ def pack_fixed(ids, keep, spans, tokenizer):
     fixed_positions.append(-1)
     fixed_parts.append(0)
     length = len(fixed_ids)
-    if length > MAX_LENGTH:
-        raise ValueError("packed input exceeds the 512-position budget")
-    pad = MAX_LENGTH - length
+    if length > max_length:
+        raise ValueError(f"packed input exceeds the {max_length}-position budget")
+    pad = max_length - length
     fixed = np.array([fixed_ids + [tokenizer.pad_token_id]*pad,
                       fixed_positions + [-1]*pad, fixed_parts + [0]*pad], dtype=np.int32)
     return torch.from_numpy(fixed), length
