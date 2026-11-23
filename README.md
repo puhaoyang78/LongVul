@@ -2,6 +2,8 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。采用种子 42、验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+**填充策略变更（尚未重训）：** `context_selection.py` 的 `uniform_fill()` 已改为先补齐已选代码的行边界，再为未覆盖的源码区域保留少量完整代码单元，最后沿已选片段向两侧轮流扩展；仅在预算有零碎余量时截取局部 token。下文已发布的 UniXcoder 和 Oracle 实验结果来自修改前的提交 [`9d95363`](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)，**不能视为新填充策略的实测结果**。代码行边界不等于完整 AST 语句，语义完整性仍需单独验证。
+
 ## UniXcoder 修复区域 Oracle（特权信息）
 
 **Train、Valid 和 Test 的 Oracle 输入都使用划分内的真实配对版本。** 表中的分数只描述该离线协议的实测表现。输入选择需要已知真实修复，常规单函数推理缺少这个条件。
