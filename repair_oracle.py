@@ -86,24 +86,37 @@ def prepare_pair(left, right, tokenizer, *, method, parser):
                  for side, source in enumerate((left, right)))
 
 
-def prepare_side(source, tokenizer, edits, *, with_context, parser):
-    code, ids, offsets = source
-    keep, boundaries = input_layout(code, ids, offsets)
-    mapped = {kind: [(bisect_left(keep, lo), bisect_left(keep, hi)) for lo, hi in spans]
-              for kind, spans in edits.items()}
-    anchors = reserve_blocks([], [span for kind in EDIT_TYPES for span in mapped[kind]])
-    anchors = reserve_blocks(anchors, [span for kind in GAP_TYPES for span in mapped[kind]])
-    selected, parse_error = anchors, None
+def compact_edits(keep, edits):
+    return {kind: [(bisect_left(keep, lo), bisect_left(keep, hi)) for lo, hi in spans]
+            for kind, spans in edits.items()}
+
+
+def raw_runs(keep, spans):
+    return merge([(int(i), int(i)+1) for lo, hi in spans for i in keep[lo:hi]])
+
+
+def pack_selected(ids, keep, boundaries, selected, tokenizer):
+    """The 9d95363 layout, from reserved blocks through source-order packing."""
     if len(keep) <= BUDGET:
         spans = [(0, len(keep))]
     else:
-        if with_context and anchors and occupied(anchors) < BUDGET:
-            links, parse_error = related_statements(code, offsets, keep, anchors, parser)
-            selected = prefer_context(anchors, {link for link in links if link[0] in CONTEXT_TYPES})
         edges = [boundaries[i] for i in region_edges(boundaries)]
-        spans = uniform_fill(selected, boundaries, list(zip(edges, edges[1:])))
-    example = fixed_example(ids, keep, spans, tokenizer, torch.full((REGIONS, 4), -1, dtype=torch.int32))
-    example.update(repair_bpe_spans=edits, oracle_anchor_runs=merge([(i, i+1) for lo, hi in anchors for i in keep[lo:hi]]),
+        spans = uniform_fill(selected, boundaries, list(zip(edges, edges[1:])), contiguous=False)
+    return fixed_example(ids, keep, spans, tokenizer, torch.full((REGIONS, 4), -1, dtype=torch.int32))
+
+
+def prepare_side(source, tokenizer, edits, *, with_context, parser):
+    code, ids, offsets = source
+    keep, boundaries = input_layout(code, ids, offsets)
+    mapped = compact_edits(keep, edits)
+    anchors = reserve_blocks([], [span for kind in EDIT_TYPES for span in mapped[kind]])
+    anchors = reserve_blocks(anchors, [span for kind in GAP_TYPES for span in mapped[kind]])
+    selected, parse_error = anchors, None
+    if len(keep) > BUDGET and with_context and anchors and occupied(anchors) < BUDGET:
+        links, parse_error = related_statements(code, offsets, keep, anchors, parser)
+        selected = prefer_context(anchors, {link for link in links if link[0] in CONTEXT_TYPES})
+    example = pack_selected(ids, keep, boundaries, selected, tokenizer)
+    example.update(repair_bpe_spans=edits, oracle_anchor_runs=raw_runs(keep, anchors),
                    parse_error=parse_error)
     return example
 
@@ -121,13 +134,14 @@ def overlap_bpe(left, right):
     return total
 
 
-def repair_retention(oracle_root, baseline_root):
-    """Score all four saved test selections against the same raw edit intervals."""
-    methods = dict.fromkeys(("uniform_sampling", "context_aware"), baseline_root)
-    methods.update(dict.fromkeys(METHODS, oracle_root))
+def repair_retention(oracle_root, baseline_root, *, extra_predictions=None):
+    """Score saved test selections against the same raw edit intervals."""
+    paths = {method: baseline_root / method / "test.csv.gz" for method in ("uniform_sampling", "context_aware")}
+    paths.update({method: oracle_root / method / "test.csv.gz" for method in METHODS})
+    paths.update(extra_predictions or {})
     predictions = {}
-    for method, root in methods.items():
-        with gzip.open(root / method / "test.csv.gz", "rt", newline="") as handle:
+    for method, path in paths.items():
+        with gzip.open(path, "rt", newline="") as handle:
             predictions[method] = list(csv.DictReader(handle))
     reference = predictions["oracle_diff"]
     for first, second in zip(reference, predictions["oracle_diff_context"], strict=True):

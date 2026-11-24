@@ -173,6 +173,15 @@ def prepare_function(code, ids, offsets, tokenizer, *, alternatives):
                 limits=limits, candidate_counts=(specs[..., 0] >= 0).sum(1).tolist())
 
 
+def tokenized_batches(rows, tokenizer):
+    for start in range(0, len(rows), 32):
+        batch = rows[start:start+32]
+        texts = [row["func"] for row in batch]
+        encoding = tokenizer(texts, add_special_tokens=False, return_offsets_mapping=True,
+                             return_attention_mask=False, verbose=False)
+        yield batch, texts, encoding
+
+
 class CompactData(Dataset):
     def __init__(self, split, tokenizer, *, alternatives=False, prepare=None, prepare_pair=None):
         rows = prime_source_rows(DATA, split)
@@ -180,11 +189,7 @@ class CompactData(Dataset):
         self.metadata, self.examples = [], []
         if prepare is None:
             prepare = partial(prepare_function, alternatives=alternatives)
-        for start in range(0, len(rows), 32):
-            batch = rows[start:start+32]
-            texts = [r["func"] for r in batch]
-            encoding = tokenizer(texts, add_special_tokens=False,
-                                 return_offsets_mapping=True, return_attention_mask=False, verbose=False)
+        for batch, texts, encoding in tokenized_batches(rows, tokenizer):
             sources = zip(texts, encoding.input_ids, encoding.offset_mapping, strict=True)
             if prepare_pair is None:
                 examples = (prepare(*source, tokenizer) for source in sources)

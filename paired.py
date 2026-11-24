@@ -37,7 +37,8 @@ UNIX_RESULTS = ROOT / "results" / "unixcoder_context"
 UNIX_WEIGHTS = ROOT / "checkpoints" / "unixcoder_context"
 ORACLE_RESULTS = ROOT / "results" / "unixcoder_repair_oracle"
 ORACLE_WEIGHTS = ROOT / "checkpoints" / "unixcoder_repair_oracle"
-UNIX_METHODS = (*context.METHODS, *repair.METHODS)
+PREDICTED_DIFF = "predicted_diff"
+UNIX_METHODS = (*context.METHODS, *repair.METHODS, PREDICTED_DIFF)
 
 
 def make_model(tokenizer, method, *, long_input=False, pretrained=True):
@@ -70,9 +71,12 @@ def train_epoch(model, loader, optimizer, scheduler, *, bf16=False):
     for i, batch in enumerate(loader):
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
             loss = model(to_gpu(batch, labels=True))["loss"]
-        group_first = i//accumulation * BATCH_SIZE
-        group_size = min(BATCH_SIZE, len(loader.dataset)-group_first)
-        (loss * (len(batch["labels"])/group_size)).backward()
+        if accumulation == 1:
+            loss.backward()
+        else:
+            group_first = i//accumulation * BATCH_SIZE
+            group_size = min(BATCH_SIZE, len(loader.dataset)-group_first)
+            (loss * (len(batch["labels"])/group_size)).backward()
         if "bank" in batch:
             gradients.append(torch.linalg.vector_norm(torch.stack([p.grad.detach().norm() for p in selector])))
         if (i+1) % accumulation == 0 or i+1 == len(loader):
@@ -415,7 +419,22 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
     return selected, history
 
 
+def classifier_config(method):
+    source = UNIX_BASE if method in UNIX_METHODS else BASE
+    return dict(method=method, seed=SEED, epochs=EPOCHS, batch_size=BATCH_SIZE, length=MAX_LENGTH,
+                lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="LOSVERAdamW", weight_decay=0.,
+                warmup=WARMUP_FRACTION, grad_clip=MAX_GRAD_NORM, precision="fp32 eager",
+                model=str(source), loss="function BCE", class_weight=1., threshold=.5, comparison=">",
+                selection="highest full validation MCC, earliest tie", gpu=torch.cuda.get_device_name(),
+                cuda=torch.version.cuda, torch=torch.__version__, transformers=transformers.__version__,
+                python=platform.python_version())
+
+
 def run(method, tokenizer):
+    if method == PREDICTED_DIFF:
+        from predicted_diff import run_predicted_diff
+
+        return run_predicted_diff(tokenizer)
     unixcoder = method in UNIX_METHODS
     privileged = method in repair.METHODS
     root = (ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS) / method
@@ -429,13 +448,7 @@ def run(method, tokenizer):
     use_selection, use_positions = METHODS.get(method, (False, False))
     train, train_prep = measure_data("train", tokenizer, method)
     valid, valid_prep = measure_data("valid", tokenizer, method)
-    config = dict(method=method, seed=SEED, epochs=EPOCHS, batch_size=BATCH_SIZE, length=MAX_LENGTH,
-                  lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="LOSVERAdamW", weight_decay=0.,
-                  warmup=WARMUP_FRACTION, grad_clip=MAX_GRAD_NORM, precision="fp32 eager",
-                  model=str(UNIX_BASE if unixcoder else BASE), loss="function BCE", class_weight=1., threshold=.5, comparison=">",
-                  selection="highest full validation MCC, earliest tie", gpu=torch.cuda.get_device_name(),
-                  cuda=torch.version.cuda, torch=torch.__version__, transformers=transformers.__version__,
-                  python=platform.python_version())
+    config = classifier_config(method)
     if unixcoder:
         config.update(model_id=BACKBONES["unixcoder"][0], model_revision=BACKBONES["unixcoder"][1],
                       quotas=QUOTAS if method == "uniform4" else context.BASE_QUOTAS,
@@ -507,7 +520,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     if args.smoke_only:
         set_seed(SEED)
-        if any(method in repair.METHODS for method in args.methods):
+        if PREDICTED_DIFF in args.methods:
+            from predicted_diff import smoke_predicted_diff
+
+            smoke_predicted_diff(load_tokenizer("unixcoder", UNIX_BASE))
+        elif any(method in repair.METHODS for method in args.methods):
             smoke_repair(load_tokenizer("unixcoder", UNIX_BASE))
         elif any(method in context.METHODS for method in args.methods):
             smoke_context(load_tokenizer("unixcoder", UNIX_BASE))

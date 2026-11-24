@@ -88,7 +88,7 @@ LongVul 的整体 MCC 和两项 AUC 高于两个单函数基线。其 F1 低于�
 
 ## UniXcoder 修复区域 Oracle（特权信息）
 
-下文历史 UniXcoder 512 和 Oracle 结果使用当时的居中填充。复现这些结果时在历史版本运行所列命令。当前共享填充实现默认沿完整行单元扩展。[历史实验版本](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)
+512-token 的两种 Oracle 和 Predicted-Diff 共用历史居中填充与打包。已发布的 Uniform Sampling 和 Context-Aware 对照也来自历史版本。复现这两个对照时在历史版本运行对应命令。[历史实验版本](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)
 
 **Train、Valid 和 Test 的 Oracle 输入都使用划分内的真实配对版本。** 表中的分数只描述该离线协议的实测表现。输入选择需要已知真实修复，常规单函数推理缺少这个条件。
 
@@ -172,6 +172,50 @@ PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
 | Oracle-Diff+Context | 13 | 0.2643 | 36.01 | 158.26 / 16.95 / 21.90 | 4.80 | 6.446 / 0.871 |
 
 单张 RTX 4090 依次执行两个 Oracle，含预检、验证和检查点写入共用 1 小时 27 分 40 秒。优化时间累加训练步骤。预处理含读取、对齐、分词及选段，推理含批次组装、一次 UniXcoder 编码和预测分数回传。显存为 PyTorch 已分配峰值。原有基线使用已保存的检查点推理测量。Oracle-Diff+Context 比 Oracle-Diff 多用 11.41 秒测试预处理，编码耗时接近。
+
+## UniXcoder 512 Predicted-Diff
+
+将历史 Oracle-Diff 的真实修改区换成定位器预测区。输入沿用 `9d95363` 的缩进简化、块间预算分配、四区居中填充和源顺序 SEP 打包。原始正文 ≤510 BPE 的函数直接保留全文。定位器以同一份简化 BPE 的行单元为输入，沿用冻结的 UniXcoder 词嵌入、局部卷积和类加权区域 BCE。训练标签来自 Train 的历史修改区及纯插入或删除的空侧邻近行。在 Valid 按区域 AP 选定位器。
+
+定位器固定后，仅在 Valid 上比较每函数最多 4 或 8 个预测区域，以及 127、191 或 255 个优先位置。以简化后确实需要选段的 Valid 函数中，打包后的原始修改 BPE 保留率为准，并列时优先采用较小预算及较少区域。每个需要选段的函数至少给均匀填充留出 255 个正文及间隔位置。Train、Valid、Test 分类输入均使用该定位器和固定规则，只读取当前函数。Test 的真实差异在分类预测写入后用于诊断。
+
+分类器沿用历史 FP32 Eager UniXcoder-base-nine、独立函数 BCE、种子 42、16 轮、batch 8、学习率 2e-5、LOSVERAdamW 和 10% 预热。模型按完整 Valid MCC 选择，分类阈值固定 `p > 0.5`。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" paired.py predicted_diff --smoke-only
+"$PYTHON" paired.py predicted_diff
+"$PYTHON" -m unittest discover -s tests -v
+```
+
+### Predicted-Diff 正式结果
+
+Valid 选出 4 个预测块、最多 127 个优先位置。651 个需要选段的 Valid 函数保留了 38.66% 的实际修改 BPE。定位器取第 5 轮，Train、Valid、Test 的区域 AP 为 0.2010、0.0851、0.0586，Test 长组 AP 为 0.0466。分类器取第 7 轮，Valid MCC 为 0.0948。
+
+| Test 原始 BPE | 函数数 | MCC | F1 | ROC-AUC | PR-AUC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 整体 | 1,128 | 0.0694 | 0.5134 | 0.5542 | 0.5551 |
+| >510 | 732 | 0.0440 | 0.4606 | 0.5352 | 0.5203 |
+| ≤510 | 396 | 0.1078 | 0.5926 | 0.5873 | 0.5980 |
+| 511–1020 | 254 | 0.1099 | 0.5462 | 0.5619 | 0.5377 |
+| 1021–2040 | 224 | 0.0092 | 0.4308 | 0.5109 | 0.5188 |
+| ≥2041 | 254 | 0.0074 | 0.3842 | 0.5272 | 0.5171 |
+
+| 方法 | 整体 MCC | >510 MCC | >510 修改 BPE 保留率 | 完全相同的配对输入 |
+| --- | ---: | ---: | ---: | ---: |
+| Uniform-4 | 0.0408 | −0.0015 | 37.97% | 31/564 |
+| Uniform Sampling | 0.0880 | 0.0465 | 40.36% | 20/564 |
+| Context-Aware | 0.1199 | 0.0935 | 37.79% | 32/564 |
+| Oracle-Diff（特权信息） | 0.2111 | 0.2620 | 89.37% | 0/564 |
+| Oracle-Diff+Context（特权信息） | 0.2352 | 0.2666 | 89.37% | 0/564 |
+| Predicted-Diff | 0.0694 | 0.0440 | 38.55% | 41/564 |
+
+Predicted-Diff 的整体 MCC 比 Oracle-Diff 低 0.1417，长组低 0.2180。整体和长组 MCC 均低于 Uniform Sampling 与 Context-Aware。Predicted-Diff 全 Test 保留 50.27% 的真实修改 BPE。长函数平均包含 6.75 个编码片段，每片段平均 74.60 BPE、中位数 103 BPE，统计使用实际 SEP 分隔。
+
+定位器和分类器的训练步骤分别耗时 6.31 和 36.08 分钟。全 Test 的分词与缩进简化 8.26 秒，定位器打分 1.32 秒，选段打包 1.09 秒，UniXcoder 分类 4.79 秒。分类器训练和推理峰值显存分别为 6.42 和 0.87 GiB。36 对真实 Valid 函数的两种 Oracle 布局均逐项匹配历史提交。
+
+配置、区域策略、逐轮指标、预测及五个历史对照的完整分层比较见 [`results/unixcoder_predicted_diff/`](results/unixcoder_predicted_diff)。定位器和分类器的最佳与续训检查点保存在服务器 `checkpoints/unixcoder_predicted_diff/`。
 
 ## UniXcoder 上下文感知选择
 
