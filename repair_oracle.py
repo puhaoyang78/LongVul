@@ -10,7 +10,7 @@ import torch
 
 from compaction import BUDGET, REGIONS, region_edges
 from context_selection import (fixed_example, gaps, input_layout, merge, occupied, prefer_context,
-                               related_statements, uniform_fill)
+                               related_statements, uniform_fill, visible_source)
 from window_inputs import GROUPS
 
 METHODS = ("oracle_diff", "oracle_diff_context")
@@ -158,8 +158,7 @@ def grouped_edit_retention(observations):
 def packed_edit_retention(data, annotations):
     def observations():
         for ex, edits in zip(data.examples, annotations, strict=True):
-            raw = ex["fixed"][1, :ex["length"]].tolist()
-            yield ex["raw"], edits, merge([(i, i+1) for i in raw if i >= 0])
+            yield ex["raw"], edits, visible_source(ex)
 
     return grouped_edit_retention(observations())
 

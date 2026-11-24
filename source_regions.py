@@ -13,11 +13,13 @@ from context_selection import CONTROL, STATEMENT, control_header, merge
 from dependence import EDGE_TYPES, physical_lines, source_position
 
 SPLICE_LINE = re.compile(r"(?:\\|\?\?/)[ \t\v\f]*(?:\r\n|\n|\r)")
-PROTECTED_LINE = re.compile(r"(?m)^[^\r\n]*(?:#|%:|\?\?=)[^\r\n]*")
+PROTECTED_LINE = re.compile(r"(?:\A|(?<=[\r\n]))[^\r\n]*(?:#|%:|\?\?=)[^\r\n]*")
 HSPACE = re.compile(r"[ \t]+")
 QUOTES = re.compile("[\"']")
 FIRST_TOKEN = re.compile(r"[\w$]+|\S")
 LITERALS = {"string_literal", "raw_string_literal", "char_literal", "system_lib_string", "number_literal"}
+PHYSICAL_LINE = re.compile(r"(?:\A|(?<=[\r\n]))[^\r\n]*(?:\r\n|\r|\n)")
+LINE_SENSITIVE = re.compile(r"\b(?:__LINE__|__COLUMN__|__builtin_LINE|__builtin_COLUMN|source_location)\b")
 
 
 @dataclass(slots=True)
@@ -54,7 +56,18 @@ class Source:
         return len(self.raw_offsets)
 
 
-def analyze(code, parser):
+def standalone_null(node):
+    """Only bare compound lists under a function body can lose a null statement."""
+    block = node.parent
+    if block is None or block.type != "compound_statement":
+        return False
+    while block.parent is not None and block.parent.type == "compound_statement":
+        block = block.parent
+    owner = block.parent
+    return owner is not None and owner.type == "function_definition" and owner.child_by_field_name("body") == block
+
+
+def analyze(code, parser, *, null_statements=None):
     raw = code.encode("utf-8")
     tree = parser.parse(raw)
     if len(raw) == len(code):
@@ -84,6 +97,9 @@ def analyze(code, parser):
                 statements.append((*map(char, header[0]), "header"))
         elif kind in STATEMENT and not node.has_error:
             statements.append((lo, hi, "statement"))
+            if (null_statements is not None and kind == "expression_statement" and code[lo:hi] == ";"
+                    and standalone_null(node)):
+                null_statements.append(lo)
         elif kind == "function_definition":
             body = node.child_by_field_name("body")
             if body is not None:
@@ -92,8 +108,8 @@ def analyze(code, parser):
     return comments, literals, statements, tree.root_node.has_error
 
 
-def simplify(code, comments, literals):
-    """Preserve physical newlines and all literal/directive characters."""
+def simplify(code, comments, literals, *, drop_blank=False):
+    """Protect literal/directive characters and preserve lexical token boundaries."""
     if SPLICE_LINE.search(code):
         return code, np.arange(len(code), dtype=np.int32), np.zeros(len(code), dtype=bool), "line_splice"
     protected = np.zeros(len(code), dtype=bool)
@@ -121,6 +137,15 @@ def simplify(code, comments, literals):
     index = np.flatnonzero(retain).astype(np.int32, copy=False)
     substituted = synthetic[index]
     simple = "".join(" " if flag else code[i] for i, flag in zip(index.tolist(), substituted.tolist(), strict=True))
+    if drop_blank and not (PROTECTED_LINE.search(code) or LINE_SENSITIVE.search(code)):
+        kept = np.ones(len(simple), dtype=bool)
+        for match in PHYSICAL_LINE.finditer(simple):
+            lo, hi = match.span()
+            if not match.group().strip(" \t\v\f\r\n") and not protected[index[lo:hi]].any():
+                kept[lo:hi] = False
+        if not kept.all():
+            simple = "".join(c for c, keep in zip(simple, kept.tolist(), strict=True) if keep)
+            index, substituted = index[kept], substituted[kept]
     if SPLICE_LINE.search(simple):
         return code, np.arange(len(code), dtype=np.int32), np.zeros(len(code), dtype=bool), "possible_new_splice"
     return simple, index, substituted, "lexical"

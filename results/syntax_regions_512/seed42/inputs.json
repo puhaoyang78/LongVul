@@ -1,0 +1,5345 @@
+{
+  "policy": {
+    "selected_limit": 4,
+    "validation": [
+      {
+        "limit": 1,
+        "retained_bpe": 22012,
+        "available_bpe": 57209,
+        "fraction": 0.3847646349350627
+      },
+      {
+        "limit": 2,
+        "retained_bpe": 22151,
+        "available_bpe": 57209,
+        "fraction": 0.38719432257162334
+      },
+      {
+        "limit": 4,
+        "retained_bpe": 22263,
+        "available_bpe": 57209,
+        "fraction": 0.3891520564946075
+      }
+    ],
+    "base_quota": 88,
+    "sampler": "9d9536371b20ae3ea445254d8b4a4a6f36e252e1",
+    "ranking_seed": 42
+  },
+  "locator": {
+    "config": {
+      "seed": 42,
+      "batch": 512,
+      "epochs": 16,
+      "lr": 0.001,
+      "parts": 4,
+      "channels": 64,
+      "source_model": "/home/PublicData/PHY-data/resource/unixcoder-base-nine",
+      "frozen_input_embeddings": true,
+      "pos_weight": 31.646241350535483,
+      "target": "union of added edit and empty-side neighbor BPE divided by actual added positions",
+      "selection": "full Valid AP on nonzero soft targets, earliest tie",
+      "base_quota": 88,
+      "soft_targets": true
+    },
+    "selected_epoch": 1,
+    "training_seconds": 126.49038931587711,
+    "invoked_seconds": 133.9972748659784,
+    "peak_allocated_bytes": 187648000,
+    "splits": {
+      "train": {
+        "functions": 8708,
+        "regions": 467008,
+        "positive_regions": 33517,
+        "functions_with_positive": 4208,
+        "ap": 0.16576734368220447,
+        "auc": 0.7394977134950966,
+        "top1": {
+          "hit_functions": 702,
+          "recall": 0.02094459528000716,
+          "hit_rate": 0.16682509505703422
+        },
+        "top5": {
+          "hit_functions": 1732,
+          "recall": 0.10803472864516514,
+          "hit_rate": 0.41159695817490494
+        },
+        "top10": {
+          "hit_functions": 2419,
+          "recall": 0.21225049974639734,
+          "hit_rate": 0.5748574144486692
+        },
+        "inference_seconds": 3.3536885670619085
+      },
+      "valid": {
+        "functions": 1124,
+        "regions": 46435,
+        "positive_regions": 3030,
+        "functions_with_positive": 502,
+        "ap": 0.0996544406101672,
+        "auc": 0.6349998650366131,
+        "top1": {
+          "hit_functions": 70,
+          "recall": 0.0231023102310231,
+          "hit_rate": 0.1394422310756972
+        },
+        "top5": {
+          "hit_functions": 187,
+          "recall": 0.12145214521452145,
+          "hit_rate": 0.37250996015936255
+        },
+        "top10": {
+          "hit_functions": 262,
+          "recall": 0.2372937293729373,
+          "hit_rate": 0.5219123505976095
+        },
+        "inference_seconds": 0.3413806449389085
+      },
+      "test": {
+        "functions": 1128,
+        "regions": 58841,
+        "positive_regions": 3441,
+        "functions_with_positive": 557,
+        "ap": 0.09646797989441894,
+        "auc": 0.6568253918294678,
+        "top1": {
+          "hit_functions": 66,
+          "recall": 0.01918047079337402,
+          "hit_rate": 0.118491921005386
+        },
+        "top5": {
+          "hit_functions": 216,
+          "recall": 0.12321999418773612,
+          "hit_rate": 0.3877917414721723
+        },
+        "top10": {
+          "hit_functions": 312,
+          "recall": 0.24731182795698925,
+          "hit_rate": 0.5601436265709157
+        }
+      }
+    }
+  },
+  "preprocessing": {
+    "train": {
+      "source_seconds": 67.60623618401587,
+      "syntax_and_groups_seconds": 151.07929466001224,
+      "locator_token_bags_seconds": 5.039753790013492
+    },
+    "valid": {
+      "source_seconds": 6.871915481984615,
+      "syntax_and_groups_seconds": 16.26916651101783,
+      "locator_token_bags_seconds": 0.3095955819590017
+    },
+    "test": {
+      "source_seconds": 8.39728896599263,
+      "syntax_and_groups_seconds": 20.978270459920168,
+      "locator_token_bags_seconds": 0.42570021201390773,
+      "locator_scoring_seconds": 0.4366662009852007
+    }
+  },
+  "selection_seconds": {
+    "random_region": {
+      "train": 18.115318484953605,
+      "valid": 1.9684055909747258,
+      "test": 2.388718034955673
+    },
+    "region_oracle": {
+      "train": 14.862595794955269,
+      "valid": 1.6097216960042715,
+      "test": 1.9989918560022488
+    },
+    "predicted_region": {
+      "train": 16.128896128037013,
+      "valid": 1.7582108200294897,
+      "test": 2.163495806977153
+    }
+  },
+  "coverage": {
+    "valid": {
+      "base_windows": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 24929,
+            "available_bpe": 54293,
+            "fraction": 0.4591567973771941
+          },
+          "delete": {
+            "retained_bpe": 1461,
+            "available_bpe": 3866,
+            "fraction": 0.3779099844800828
+          },
+          "insert": {
+            "retained_bpe": 7903,
+            "available_bpe": 18576,
+            "fraction": 0.4254414298018949
+          },
+          "insert_gap": {
+            "retained_bpe": 4855,
+            "available_bpe": 9003,
+            "fraction": 0.5392646895479285
+          },
+          "delete_gap": {
+            "retained_bpe": 785,
+            "available_bpe": 1603,
+            "fraction": 0.4897067997504679
+          },
+          "actual_edits": {
+            "retained_bpe": 34293,
+            "available_bpe": 76735,
+            "fraction": 0.4469016745943833
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 10183,
+            "available_bpe": 39547,
+            "fraction": 0.25749108655523806
+          },
+          "delete": {
+            "retained_bpe": 811,
+            "available_bpe": 3216,
+            "fraction": 0.25217661691542287
+          },
+          "insert": {
+            "retained_bpe": 3773,
+            "available_bpe": 14446,
+            "fraction": 0.2611795652775855
+          },
+          "insert_gap": {
+            "retained_bpe": 1699,
+            "available_bpe": 5847,
+            "fraction": 0.2905763639473234
+          },
+          "delete_gap": {
+            "retained_bpe": 229,
+            "available_bpe": 1047,
+            "fraction": 0.218720152817574
+          },
+          "actual_edits": {
+            "retained_bpe": 14767,
+            "available_bpe": 57209,
+            "fraction": 0.25812372179202575
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 14746,
+            "available_bpe": 14746,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 650,
+            "available_bpe": 650,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 4130,
+            "available_bpe": 4130,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 3156,
+            "available_bpe": 3156,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 556,
+            "available_bpe": 556,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 19526,
+            "available_bpe": 19526,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 5403,
+            "available_bpe": 11057,
+            "fraction": 0.4886497241566429
+          },
+          "delete": {
+            "retained_bpe": 393,
+            "available_bpe": 717,
+            "fraction": 0.5481171548117155
+          },
+          "insert": {
+            "retained_bpe": 2088,
+            "available_bpe": 4232,
+            "fraction": 0.4933837429111531
+          },
+          "insert_gap": {
+            "retained_bpe": 914,
+            "available_bpe": 1876,
+            "fraction": 0.48720682302771856
+          },
+          "delete_gap": {
+            "retained_bpe": 130,
+            "available_bpe": 295,
+            "fraction": 0.4406779661016949
+          },
+          "actual_edits": {
+            "retained_bpe": 7884,
+            "available_bpe": 16006,
+            "fraction": 0.4925652880169936
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 3668,
+            "available_bpe": 15301,
+            "fraction": 0.2397228939285014
+          },
+          "delete": {
+            "retained_bpe": 244,
+            "available_bpe": 1477,
+            "fraction": 0.16519972918077183
+          },
+          "insert": {
+            "retained_bpe": 1118,
+            "available_bpe": 5537,
+            "fraction": 0.20191439407621456
+          },
+          "insert_gap": {
+            "retained_bpe": 577,
+            "available_bpe": 2015,
+            "fraction": 0.2863523573200993
+          },
+          "delete_gap": {
+            "retained_bpe": 65,
+            "available_bpe": 358,
+            "fraction": 0.18156424581005587
+          },
+          "actual_edits": {
+            "retained_bpe": 5030,
+            "available_bpe": 22315,
+            "fraction": 0.22540891776831729
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 1112,
+            "available_bpe": 13189,
+            "fraction": 0.08431268481310182
+          },
+          "delete": {
+            "retained_bpe": 174,
+            "available_bpe": 1022,
+            "fraction": 0.17025440313111545
+          },
+          "insert": {
+            "retained_bpe": 567,
+            "available_bpe": 4677,
+            "fraction": 0.12123155869146889
+          },
+          "insert_gap": {
+            "retained_bpe": 208,
+            "available_bpe": 1956,
+            "fraction": 0.10633946830265849
+          },
+          "delete_gap": {
+            "retained_bpe": 34,
+            "available_bpe": 394,
+            "fraction": 0.08629441624365482
+          },
+          "actual_edits": {
+            "retained_bpe": 1853,
+            "available_bpe": 18888,
+            "fraction": 0.09810461668784413
+          }
+        }
+      },
+      "eligible_candidate_union": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 43743,
+            "available_bpe": 54293,
+            "fraction": 0.8056839739929641
+          },
+          "delete": {
+            "retained_bpe": 3166,
+            "available_bpe": 3866,
+            "fraction": 0.8189342990170719
+          },
+          "insert": {
+            "retained_bpe": 14511,
+            "available_bpe": 18576,
+            "fraction": 0.7811692506459949
+          },
+          "insert_gap": {
+            "retained_bpe": 7442,
+            "available_bpe": 9003,
+            "fraction": 0.8266133511051872
+          },
+          "delete_gap": {
+            "retained_bpe": 1260,
+            "available_bpe": 1603,
+            "fraction": 0.7860262008733624
+          },
+          "actual_edits": {
+            "retained_bpe": 61420,
+            "available_bpe": 76735,
+            "fraction": 0.8004170196129536
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 28997,
+            "available_bpe": 39547,
+            "fraction": 0.7332288163451084
+          },
+          "delete": {
+            "retained_bpe": 2516,
+            "available_bpe": 3216,
+            "fraction": 0.7823383084577115
+          },
+          "insert": {
+            "retained_bpe": 10381,
+            "available_bpe": 14446,
+            "fraction": 0.7186072269140247
+          },
+          "insert_gap": {
+            "retained_bpe": 4286,
+            "available_bpe": 5847,
+            "fraction": 0.733025483153754
+          },
+          "delete_gap": {
+            "retained_bpe": 704,
+            "available_bpe": 1047,
+            "fraction": 0.6723973256924546
+          },
+          "actual_edits": {
+            "retained_bpe": 41894,
+            "available_bpe": 57209,
+            "fraction": 0.7322973657990876
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 14746,
+            "available_bpe": 14746,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 650,
+            "available_bpe": 650,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 4130,
+            "available_bpe": 4130,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 3156,
+            "available_bpe": 3156,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 556,
+            "available_bpe": 556,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 19526,
+            "available_bpe": 19526,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 9195,
+            "available_bpe": 11057,
+            "fraction": 0.8315998914714661
+          },
+          "delete": {
+            "retained_bpe": 633,
+            "available_bpe": 717,
+            "fraction": 0.8828451882845189
+          },
+          "insert": {
+            "retained_bpe": 3564,
+            "available_bpe": 4232,
+            "fraction": 0.8421550094517959
+          },
+          "insert_gap": {
+            "retained_bpe": 1532,
+            "available_bpe": 1876,
+            "fraction": 0.8166311300639659
+          },
+          "delete_gap": {
+            "retained_bpe": 220,
+            "available_bpe": 295,
+            "fraction": 0.7457627118644068
+          },
+          "actual_edits": {
+            "retained_bpe": 13392,
+            "available_bpe": 16006,
+            "fraction": 0.8366862426590028
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 11861,
+            "available_bpe": 15301,
+            "fraction": 0.7751780929351023
+          },
+          "delete": {
+            "retained_bpe": 1215,
+            "available_bpe": 1477,
+            "fraction": 0.8226134055517942
+          },
+          "insert": {
+            "retained_bpe": 3977,
+            "available_bpe": 5537,
+            "fraction": 0.7182589850099331
+          },
+          "insert_gap": {
+            "retained_bpe": 1442,
+            "available_bpe": 2015,
+            "fraction": 0.7156327543424318
+          },
+          "delete_gap": {
+            "retained_bpe": 240,
+            "available_bpe": 358,
+            "fraction": 0.6703910614525139
+          },
+          "actual_edits": {
+            "retained_bpe": 17053,
+            "available_bpe": 22315,
+            "fraction": 0.7641944880125476
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 7941,
+            "available_bpe": 13189,
+            "fraction": 0.6020926529683828
+          },
+          "delete": {
+            "retained_bpe": 668,
+            "available_bpe": 1022,
+            "fraction": 0.6536203522504892
+          },
+          "insert": {
+            "retained_bpe": 2840,
+            "available_bpe": 4677,
+            "fraction": 0.6072268548214668
+          },
+          "insert_gap": {
+            "retained_bpe": 1312,
+            "available_bpe": 1956,
+            "fraction": 0.6707566462167689
+          },
+          "delete_gap": {
+            "retained_bpe": 244,
+            "available_bpe": 394,
+            "fraction": 0.6192893401015228
+          },
+          "actual_edits": {
+            "retained_bpe": 11449,
+            "available_bpe": 18888,
+            "fraction": 0.606152054214316
+          }
+        }
+      },
+      "eligible_groups": 46435,
+      "linked_statements": 50463,
+      "parsed_with_errors": 192,
+      "long_functions_with_groups": 651
+    },
+    "test": {
+      "base_windows": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 20653,
+            "available_bpe": 50525,
+            "fraction": 0.4087679366650173
+          },
+          "delete": {
+            "retained_bpe": 995,
+            "available_bpe": 2782,
+            "fraction": 0.3576563623292595
+          },
+          "insert": {
+            "retained_bpe": 7469,
+            "available_bpe": 18967,
+            "fraction": 0.3937892128433595
+          },
+          "insert_gap": {
+            "retained_bpe": 4357,
+            "available_bpe": 9392,
+            "fraction": 0.4639054514480409
+          },
+          "delete_gap": {
+            "retained_bpe": 656,
+            "available_bpe": 1822,
+            "fraction": 0.3600439077936334
+          },
+          "actual_edits": {
+            "retained_bpe": 29117,
+            "available_bpe": 72274,
+            "fraction": 0.40286963500013834
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 10349,
+            "available_bpe": 40221,
+            "fraction": 0.2573033987220606
+          },
+          "delete": {
+            "retained_bpe": 594,
+            "available_bpe": 2381,
+            "fraction": 0.24947501049979
+          },
+          "insert": {
+            "retained_bpe": 4383,
+            "available_bpe": 15881,
+            "fraction": 0.2759901769409987
+          },
+          "insert_gap": {
+            "retained_bpe": 1689,
+            "available_bpe": 6724,
+            "fraction": 0.25118976799524095
+          },
+          "delete_gap": {
+            "retained_bpe": 406,
+            "available_bpe": 1572,
+            "fraction": 0.2582697201017812
+          },
+          "actual_edits": {
+            "retained_bpe": 15326,
+            "available_bpe": 58483,
+            "fraction": 0.2620590598977481
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 10304,
+            "available_bpe": 10304,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 401,
+            "available_bpe": 401,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 3086,
+            "available_bpe": 3086,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 2668,
+            "available_bpe": 2668,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 250,
+            "available_bpe": 250,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 13791,
+            "available_bpe": 13791,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 6345,
+            "available_bpe": 13221,
+            "fraction": 0.47991831177671884
+          },
+          "delete": {
+            "retained_bpe": 384,
+            "available_bpe": 740,
+            "fraction": 0.518918918918919
+          },
+          "insert": {
+            "retained_bpe": 2633,
+            "available_bpe": 5678,
+            "fraction": 0.4637196195843607
+          },
+          "insert_gap": {
+            "retained_bpe": 1005,
+            "available_bpe": 1924,
+            "fraction": 0.5223492723492723
+          },
+          "delete_gap": {
+            "retained_bpe": 141,
+            "available_bpe": 351,
+            "fraction": 0.4017094017094017
+          },
+          "actual_edits": {
+            "retained_bpe": 9362,
+            "available_bpe": 19639,
+            "fraction": 0.4767045165232446
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 2604,
+            "available_bpe": 10368,
+            "fraction": 0.2511574074074074
+          },
+          "delete": {
+            "retained_bpe": 173,
+            "available_bpe": 898,
+            "fraction": 0.19265033407572382
+          },
+          "insert": {
+            "retained_bpe": 1169,
+            "available_bpe": 4741,
+            "fraction": 0.2465724530689728
+          },
+          "insert_gap": {
+            "retained_bpe": 506,
+            "available_bpe": 2180,
+            "fraction": 0.23211009174311928
+          },
+          "delete_gap": {
+            "retained_bpe": 179,
+            "available_bpe": 577,
+            "fraction": 0.31022530329289427
+          },
+          "actual_edits": {
+            "retained_bpe": 3946,
+            "available_bpe": 16007,
+            "fraction": 0.246517148747423
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 1400,
+            "available_bpe": 16632,
+            "fraction": 0.08417508417508418
+          },
+          "delete": {
+            "retained_bpe": 37,
+            "available_bpe": 743,
+            "fraction": 0.04979811574697174
+          },
+          "insert": {
+            "retained_bpe": 581,
+            "available_bpe": 5462,
+            "fraction": 0.10637129256682534
+          },
+          "insert_gap": {
+            "retained_bpe": 178,
+            "available_bpe": 2620,
+            "fraction": 0.06793893129770992
+          },
+          "delete_gap": {
+            "retained_bpe": 86,
+            "available_bpe": 644,
+            "fraction": 0.13354037267080746
+          },
+          "actual_edits": {
+            "retained_bpe": 2018,
+            "available_bpe": 22837,
+            "fraction": 0.08836537198406096
+          }
+        }
+      },
+      "eligible_candidate_union": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 39534,
+            "available_bpe": 50525,
+            "fraction": 0.7824641266699653
+          },
+          "delete": {
+            "retained_bpe": 1854,
+            "available_bpe": 2782,
+            "fraction": 0.6664270309130123
+          },
+          "insert": {
+            "retained_bpe": 14751,
+            "available_bpe": 18967,
+            "fraction": 0.7777191964991828
+          },
+          "insert_gap": {
+            "retained_bpe": 7402,
+            "available_bpe": 9392,
+            "fraction": 0.7881175468483816
+          },
+          "delete_gap": {
+            "retained_bpe": 1209,
+            "available_bpe": 1822,
+            "fraction": 0.6635565312843029
+          },
+          "actual_edits": {
+            "retained_bpe": 56139,
+            "available_bpe": 72274,
+            "fraction": 0.7767523590779534
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 29230,
+            "available_bpe": 40221,
+            "fraction": 0.7267347902836827
+          },
+          "delete": {
+            "retained_bpe": 1453,
+            "available_bpe": 2381,
+            "fraction": 0.6102477950440991
+          },
+          "insert": {
+            "retained_bpe": 11665,
+            "available_bpe": 15881,
+            "fraction": 0.7345255336565707
+          },
+          "insert_gap": {
+            "retained_bpe": 4734,
+            "available_bpe": 6724,
+            "fraction": 0.7040452111838191
+          },
+          "delete_gap": {
+            "retained_bpe": 959,
+            "available_bpe": 1572,
+            "fraction": 0.6100508905852418
+          },
+          "actual_edits": {
+            "retained_bpe": 42348,
+            "available_bpe": 58483,
+            "fraction": 0.7241078604038781
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 10304,
+            "available_bpe": 10304,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 401,
+            "available_bpe": 401,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 3086,
+            "available_bpe": 3086,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 2668,
+            "available_bpe": 2668,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 250,
+            "available_bpe": 250,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 13791,
+            "available_bpe": 13791,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 10789,
+            "available_bpe": 13221,
+            "fraction": 0.8160502231298692
+          },
+          "delete": {
+            "retained_bpe": 574,
+            "available_bpe": 740,
+            "fraction": 0.7756756756756756
+          },
+          "insert": {
+            "retained_bpe": 4590,
+            "available_bpe": 5678,
+            "fraction": 0.8083832335329342
+          },
+          "insert_gap": {
+            "retained_bpe": 1581,
+            "available_bpe": 1924,
+            "fraction": 0.8217255717255717
+          },
+          "delete_gap": {
+            "retained_bpe": 209,
+            "available_bpe": 351,
+            "fraction": 0.5954415954415955
+          },
+          "actual_edits": {
+            "retained_bpe": 15953,
+            "available_bpe": 19639,
+            "fraction": 0.8123122358572229
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 7796,
+            "available_bpe": 10368,
+            "fraction": 0.751929012345679
+          },
+          "delete": {
+            "retained_bpe": 618,
+            "available_bpe": 898,
+            "fraction": 0.688195991091314
+          },
+          "insert": {
+            "retained_bpe": 3551,
+            "available_bpe": 4741,
+            "fraction": 0.7489981016663151
+          },
+          "insert_gap": {
+            "retained_bpe": 1613,
+            "available_bpe": 2180,
+            "fraction": 0.7399082568807339
+          },
+          "delete_gap": {
+            "retained_bpe": 418,
+            "available_bpe": 577,
+            "fraction": 0.7244367417677643
+          },
+          "actual_edits": {
+            "retained_bpe": 11965,
+            "available_bpe": 16007,
+            "fraction": 0.7474854751046417
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 10645,
+            "available_bpe": 16632,
+            "fraction": 0.6400312650312651
+          },
+          "delete": {
+            "retained_bpe": 261,
+            "available_bpe": 743,
+            "fraction": 0.351278600269179
+          },
+          "insert": {
+            "retained_bpe": 3524,
+            "available_bpe": 5462,
+            "fraction": 0.6451849139509337
+          },
+          "insert_gap": {
+            "retained_bpe": 1540,
+            "available_bpe": 2620,
+            "fraction": 0.5877862595419847
+          },
+          "delete_gap": {
+            "retained_bpe": 332,
+            "available_bpe": 644,
+            "fraction": 0.515527950310559
+          },
+          "actual_edits": {
+            "retained_bpe": 14430,
+            "available_bpe": 22837,
+            "fraction": 0.6318693348513378
+          }
+        }
+      },
+      "eligible_groups": 58841,
+      "linked_statements": 62386,
+      "parsed_with_errors": 248,
+      "long_functions_with_groups": 716
+    }
+  },
+  "inputs": {
+    "random_region": {
+      "valid": {
+        "edit_retention": {
+          "overall": {
+            "replace": {
+              "retained_bpe": 29547,
+              "available_bpe": 54293,
+              "fraction": 0.5442138028843497
+            },
+            "delete": {
+              "retained_bpe": 1924,
+              "available_bpe": 3866,
+              "fraction": 0.4976720124159338
+            },
+            "insert": {
+              "retained_bpe": 9781,
+              "available_bpe": 18576,
+              "fraction": 0.5265396210163652
+            },
+            "insert_gap": {
+              "retained_bpe": 5695,
+              "available_bpe": 9003,
+              "fraction": 0.6325669221370654
+            },
+            "delete_gap": {
+              "retained_bpe": 918,
+              "available_bpe": 1603,
+              "fraction": 0.5726762320648784
+            },
+            "actual_edits": {
+              "retained_bpe": 41252,
+              "available_bpe": 76735,
+              "fraction": 0.537590408548902
+            }
+          },
+          "long": {
+            "replace": {
+              "retained_bpe": 14801,
+              "available_bpe": 39547,
+              "fraction": 0.37426353452853567
+            },
+            "delete": {
+              "retained_bpe": 1274,
+              "available_bpe": 3216,
+              "fraction": 0.39614427860696516
+            },
+            "insert": {
+              "retained_bpe": 5651,
+              "available_bpe": 14446,
+              "fraction": 0.39118094974387374
+            },
+            "insert_gap": {
+              "retained_bpe": 2539,
+              "available_bpe": 5847,
+              "fraction": 0.43423978108431677
+            },
+            "delete_gap": {
+              "retained_bpe": 362,
+              "available_bpe": 1047,
+              "fraction": 0.3457497612225406
+            },
+            "actual_edits": {
+              "retained_bpe": 21726,
+              "available_bpe": 57209,
+              "fraction": 0.3797654215245853
+            }
+          },
+          "short": {
+            "replace": {
+              "retained_bpe": 14746,
+              "available_bpe": 14746,
+              "fraction": 1.0
+            },
+            "delete": {
+              "retained_bpe": 650,
+              "available_bpe": 650,
+              "fraction": 1.0
+            },
+            "insert": {
+              "retained_bpe": 4130,
+              "available_bpe": 4130,
+              "fraction": 1.0
+            },
+            "insert_gap": {
+              "retained_bpe": 3156,
+              "available_bpe": 3156,
+              "fraction": 1.0
+            },
+            "delete_gap": {
+              "retained_bpe": 556,
+              "available_bpe": 556,
+              "fraction": 1.0
+            },
+            "actual_edits": {
+              "retained_bpe": 19526,
+              "available_bpe": 19526,
+              "fraction": 1.0
+            }
+          },
+          "511-1020": {
+            "replace": {
+              "retained_bpe": 7683,
+              "available_bpe": 11057,
+              "fraction": 0.6948539386813783
+            },
+            "delete": {
+              "retained_bpe": 531,
+              "available_bpe": 717,
+              "fraction": 0.7405857740585774
+            },
+            "insert": {
+              "retained_bpe": 3070,
+              "available_bpe": 4232,
+              "fraction": 0.7254253308128544
+            },
+            "insert_gap": {
+              "retained_bpe": 1358,
+              "available_bpe": 1876,
+              "fraction": 0.7238805970149254
+            },
+            "delete_gap": {
+              "retained_bpe": 215,
+              "available_bpe": 295,
+              "fraction": 0.7288135593220338
+            },
+            "actual_edits": {
+              "retained_bpe": 11284,
+              "available_bpe": 16006,
+              "fraction": 0.7049856303886043
+            }
+          },
+          "1021-2040": {
+            "replace": {
+              "retained_bpe": 5447,
+              "available_bpe": 15301,
+              "fraction": 0.35598980458793544
+            },
+            "delete": {
+              "retained_bpe": 503,
+              "available_bpe": 1477,
+              "fraction": 0.34055517941773866
+            },
+            "insert": {
+              "retained_bpe": 1804,
+              "available_bpe": 5537,
+              "fraction": 0.32580819938594907
+            },
+            "insert_gap": {
+              "retained_bpe": 823,
+              "available_bpe": 2015,
+              "fraction": 0.4084367245657568
+            },
+            "delete_gap": {
+              "retained_bpe": 105,
+              "available_bpe": 358,
+              "fraction": 0.29329608938547486
+            },
+            "actual_edits": {
+              "retained_bpe": 7754,
+              "available_bpe": 22315,
+              "fraction": 0.3474792740309209
+            }
+          },
+          "2041+": {
+            "replace": {
+              "retained_bpe": 1671,
+              "available_bpe": 13189,
+              "fraction": 0.12669648949882478
+            },
+            "delete": {
+              "retained_bpe": 240,
+              "available_bpe": 1022,
+              "fraction": 0.23483365949119372
+            },
+            "insert": {
+              "retained_bpe": 777,
+              "available_bpe": 4677,
+              "fraction": 0.16613213598460552
+            },
+            "insert_gap": {
+              "retained_bpe": 358,
+              "available_bpe": 1956,
+              "fraction": 0.18302658486707565
+            },
+            "delete_gap": {
+              "retained_bpe": 42,
+              "available_bpe": 394,
+              "fraction": 0.1065989847715736
+            },
+            "actual_edits": {
+              "retained_bpe": 2688,
+              "available_bpe": 18888,
+              "fraction": 0.1423125794155019
+            }
+          }
+        },
+        "selection": {
+          "overall": {
+            "functions": 1124,
+            "input_tokens": 467178,
+            "source_tokens": 455636,
+            "full_budget": 653,
+            "pairs": 562,
+            "identical_inputs": 1,
+            "identical_fraction": 0.0017793594306049821,
+            "syntax_analyzed": 651,
+            "syntax_errors": 192,
+            "relations": {
+              "condition": {
+                "available": 98010,
+                "context_kept": 56275,
+                "both_kept": 15998
+              },
+              "declaration": {
+                "available": 45010,
+                "context_kept": 22541,
+                "both_kept": 8253
+              },
+              "assignment": {
+                "available": 19638,
+                "context_kept": 8380,
+                "both_kept": 2935
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "long": {
+            "functions": 671,
+            "input_tokens": 343178,
+            "source_tokens": 332542,
+            "full_budget": 651,
+            "pairs": 344,
+            "identical_inputs": 1,
+            "identical_fraction": 0.0029069767441860465,
+            "syntax_analyzed": 651,
+            "syntax_errors": 192,
+            "relations": {
+              "condition": {
+                "available": 98010,
+                "context_kept": 56275,
+                "both_kept": 15998
+              },
+              "declaration": {
+                "available": 45010,
+                "context_kept": 22541,
+                "both_kept": 8253
+              },
+              "assignment": {
+                "available": 19638,
+                "context_kept": 8380,
+                "both_kept": 2935
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "short": {
+            "functions": 453,
+            "input_tokens": 124000,
+            "source_tokens": 123094,
+            "full_budget": 2,
+            "pairs": 218,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 0,
+            "syntax_errors": 0,
+            "relations": {
+              "condition": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "declaration": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "assignment": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "511-1020": {
+            "functions": 233,
+            "input_tokens": 118922,
+            "source_tokens": 116168,
+            "full_budget": 213,
+            "pairs": 119,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 213,
+            "syntax_errors": 31,
+            "relations": {
+              "condition": {
+                "available": 6627,
+                "context_kept": 6033,
+                "both_kept": 4453
+              },
+              "declaration": {
+                "available": 5011,
+                "context_kept": 4473,
+                "both_kept": 3242
+              },
+              "assignment": {
+                "available": 1777,
+                "context_kept": 1487,
+                "both_kept": 1099
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "1021-2040": {
+            "functions": 223,
+            "input_tokens": 114176,
+            "source_tokens": 110312,
+            "full_budget": 223,
+            "pairs": 116,
+            "identical_inputs": 1,
+            "identical_fraction": 0.008620689655172414,
+            "syntax_analyzed": 223,
+            "syntax_errors": 54,
+            "relations": {
+              "condition": {
+                "available": 18369,
+                "context_kept": 13615,
+                "both_kept": 5715
+              },
+              "declaration": {
+                "available": 11350,
+                "context_kept": 7309,
+                "both_kept": 3001
+              },
+              "assignment": {
+                "available": 4407,
+                "context_kept": 2664,
+                "both_kept": 1066
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "2041+": {
+            "functions": 215,
+            "input_tokens": 110080,
+            "source_tokens": 106062,
+            "full_budget": 215,
+            "pairs": 109,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 215,
+            "syntax_errors": 107,
+            "relations": {
+              "condition": {
+                "available": 73014,
+                "context_kept": 36627,
+                "both_kept": 5830
+              },
+              "declaration": {
+                "available": 28649,
+                "context_kept": 10759,
+                "both_kept": 2010
+              },
+              "assignment": {
+                "available": 13454,
+                "context_kept": 4229,
+                "both_kept": 770
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          }
+        }
+      },
+      "test": {
+        "edit_retention": {
+          "overall": {
+            "replace": {
+              "retained_bpe": 26103,
+              "available_bpe": 50525,
+              "fraction": 0.5166353290450272
+            },
+            "delete": {
+              "retained_bpe": 1313,
+              "available_bpe": 2782,
+              "fraction": 0.4719626168224299
+            },
+            "insert": {
+              "retained_bpe": 9593,
+              "available_bpe": 18967,
+              "fraction": 0.5057731850055359
+            },
+            "insert_gap": {
+              "retained_bpe": 5183,
+              "available_bpe": 9392,
+              "fraction": 0.5518526405451448
+            },
+            "delete_gap": {
+              "retained_bpe": 870,
+              "available_bpe": 1822,
+              "fraction": 0.4774972557628979
+            },
+            "actual_edits": {
+              "retained_bpe": 37009,
+              "available_bpe": 72274,
+              "fraction": 0.5120651963361651
+            }
+          },
+          "long": {
+            "replace": {
+              "retained_bpe": 15799,
+              "available_bpe": 40221,
+              "fraction": 0.39280475373561075
+            },
+            "delete": {
+              "retained_bpe": 912,
+              "available_bpe": 2381,
+              "fraction": 0.38303233935321296
+            },
+            "insert": {
+              "retained_bpe": 6507,
+              "available_bpe": 15881,
+              "fraction": 0.4097349033436182
+            },
+            "insert_gap": {
+              "retained_bpe": 2515,
+              "available_bpe": 6724,
+              "fraction": 0.37403331350386676
+            },
+            "delete_gap": {
+              "retained_bpe": 620,
+              "available_bpe": 1572,
+              "fraction": 0.3944020356234097
+            },
+            "actual_edits": {
+              "retained_bpe": 23218,
+              "available_bpe": 58483,
+              "fraction": 0.3970042576475215
+            }
+          },
+          "short": {
+            "replace": {
+              "retained_bpe": 10304,
+              "available_bpe": 10304,
+              "fraction": 1.0
+            },
+            "delete": {
+              "retained_bpe": 401,
+              "available_bpe": 401,
+              "fraction": 1.0
+            },
+            "insert": {
+              "retained_bpe": 3086,
+              "available_bpe": 3086,
+              "fraction": 1.0
+            },
+            "insert_gap": {
+              "retained_bpe": 2668,
+              "available_bpe": 2668,
+              "fraction": 1.0
+            },
+            "delete_gap": {
+              "retained_bpe": 250,
+              "available_bpe": 250,
+              "fraction": 1.0
+            },
+            "actual_edits": {
+              "retained_bpe": 13791,
+              "available_bpe": 13791,
+              "fraction": 1.0
+            }
+          },
+          "511-1020": {
+            "replace": {
+              "retained_bpe": 9799,
+              "available_bpe": 13221,
+              "fraction": 0.7411693517888208
+            },
+            "delete": {
+              "retained_bpe": 528,
+              "available_bpe": 740,
+              "fraction": 0.7135135135135136
+            },
+            "insert": {
+              "retained_bpe": 3910,
+              "available_bpe": 5678,
+              "fraction": 0.688622754491018
+            },
+            "insert_gap": {
+              "retained_bpe": 1437,
+              "available_bpe": 1924,
+              "fraction": 0.7468814968814969
+            },
+            "delete_gap": {
+              "retained_bpe": 241,
+              "available_bpe": 351,
+              "fraction": 0.6866096866096866
+            },
+            "actual_edits": {
+              "retained_bpe": 14237,
+              "available_bpe": 19639,
+              "fraction": 0.7249350781608025
+            }
+          },
+          "1021-2040": {
+            "replace": {
+              "retained_bpe": 3888,
+              "available_bpe": 10368,
+              "fraction": 0.375
+            },
+            "delete": {
+              "retained_bpe": 347,
+              "available_bpe": 898,
+              "fraction": 0.38641425389755013
+            },
+            "insert": {
+              "retained_bpe": 1782,
+              "available_bpe": 4741,
+              "fraction": 0.37587006960556846
+            },
+            "insert_gap": {
+              "retained_bpe": 824,
+              "available_bpe": 2180,
+              "fraction": 0.3779816513761468
+            },
+            "delete_gap": {
+              "retained_bpe": 260,
+              "available_bpe": 577,
+              "fraction": 0.4506065857885615
+            },
+            "actual_edits": {
+              "retained_bpe": 6017,
+              "available_bpe": 16007,
+              "fraction": 0.3758980446054851
+            }
+          },
+          "2041+": {
+            "replace": {
+              "retained_bpe": 2112,
+              "available_bpe": 16632,
+              "fraction": 0.12698412698412698
+            },
+            "delete": {
+              "retained_bpe": 37,
+              "available_bpe": 743,
+              "fraction": 0.04979811574697174
+            },
+            "insert": {
+              "retained_bpe": 815,
+              "available_bpe": 5462,
+              "fraction": 0.14921274258513365
+            },
+            "insert_gap": {
+              "retained_bpe": 254,
+              "available_bpe": 2620,
+              "fraction": 0.09694656488549619
+            },
+            "delete_gap": {
+              "retained_bpe": 119,
+              "available_bpe": 644,
+              "fraction": 0.18478260869565216
+            },
+            "actual_edits": {
+              "retained_bpe": 2964,
+              "available_bpe": 22837,
+              "fraction": 0.12978937688838288
+            }
+          }
+        },
+        "selection": {
+          "overall": {
+            "functions": 1128,
+            "input_tokens": 483213,
+            "source_tokens": 470628,
+            "full_budget": 717,
+            "pairs": 564,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 716,
+            "syntax_errors": 248,
+            "relations": {
+              "condition": {
+                "available": 133775,
+                "context_kept": 77201,
+                "both_kept": 18131
+              },
+              "declaration": {
+                "available": 58521,
+                "context_kept": 24998,
+                "both_kept": 9045
+              },
+              "assignment": {
+                "available": 24938,
+                "context_kept": 9410,
+                "both_kept": 3012
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "long": {
+            "functions": 732,
+            "input_tokens": 374500,
+            "source_tokens": 362707,
+            "full_budget": 716,
+            "pairs": 374,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 716,
+            "syntax_errors": 248,
+            "relations": {
+              "condition": {
+                "available": 133775,
+                "context_kept": 77201,
+                "both_kept": 18131
+              },
+              "declaration": {
+                "available": 58521,
+                "context_kept": 24998,
+                "both_kept": 9045
+              },
+              "assignment": {
+                "available": 24938,
+                "context_kept": 9410,
+                "both_kept": 3012
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "short": {
+            "functions": 396,
+            "input_tokens": 108713,
+            "source_tokens": 107921,
+            "full_budget": 1,
+            "pairs": 190,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 0,
+            "syntax_errors": 0,
+            "relations": {
+              "condition": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "declaration": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "assignment": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "511-1020": {
+            "functions": 254,
+            "input_tokens": 129764,
+            "source_tokens": 126568,
+            "full_budget": 238,
+            "pairs": 130,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 238,
+            "syntax_errors": 55,
+            "relations": {
+              "condition": {
+                "available": 8001,
+                "context_kept": 7287,
+                "both_kept": 5392
+              },
+              "declaration": {
+                "available": 5968,
+                "context_kept": 5373,
+                "both_kept": 3967
+              },
+              "assignment": {
+                "available": 1951,
+                "context_kept": 1767,
+                "both_kept": 1283
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "1021-2040": {
+            "functions": 224,
+            "input_tokens": 114688,
+            "source_tokens": 110863,
+            "full_budget": 224,
+            "pairs": 114,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 224,
+            "syntax_errors": 69,
+            "relations": {
+              "condition": {
+                "available": 17896,
+                "context_kept": 13537,
+                "both_kept": 5763
+              },
+              "declaration": {
+                "available": 10173,
+                "context_kept": 6835,
+                "both_kept": 2981
+              },
+              "assignment": {
+                "available": 3765,
+                "context_kept": 2357,
+                "both_kept": 956
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "2041+": {
+            "functions": 254,
+            "input_tokens": 130048,
+            "source_tokens": 125276,
+            "full_budget": 254,
+            "pairs": 130,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 254,
+            "syntax_errors": 124,
+            "relations": {
+              "condition": {
+                "available": 107878,
+                "context_kept": 56377,
+                "both_kept": 6976
+              },
+              "declaration": {
+                "available": 42380,
+                "context_kept": 12790,
+                "both_kept": 2097
+              },
+              "assignment": {
+                "available": 19222,
+                "context_kept": 5286,
+                "both_kept": 773
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "region_oracle": {
+      "valid": {
+        "edit_retention": {
+          "overall": {
+            "replace": {
+              "retained_bpe": 37737,
+              "available_bpe": 54293,
+              "fraction": 0.6950619785239349
+            },
+            "delete": {
+              "retained_bpe": 2486,
+              "available_bpe": 3866,
+              "fraction": 0.6430419037765132
+            },
+            "insert": {
+              "retained_bpe": 13413,
+              "available_bpe": 18576,
+              "fraction": 0.7220607235142119
+            },
+            "insert_gap": {
+              "retained_bpe": 7176,
+              "available_bpe": 9003,
+              "fraction": 0.7970676441186271
+            },
+            "delete_gap": {
+              "retained_bpe": 1135,
+              "available_bpe": 1603,
+              "fraction": 0.7080474111041797
+            },
+            "actual_edits": {
+              "retained_bpe": 53636,
+              "available_bpe": 76735,
+              "fraction": 0.6989769987619731
+            }
+          },
+          "long": {
+            "replace": {
+              "retained_bpe": 22991,
+              "available_bpe": 39547,
+              "fraction": 0.5813588894227122
+            },
+            "delete": {
+              "retained_bpe": 1836,
+              "available_bpe": 3216,
+              "fraction": 0.5708955223880597
+            },
+            "insert": {
+              "retained_bpe": 9283,
+              "available_bpe": 14446,
+              "fraction": 0.6426000276893258
+            },
+            "insert_gap": {
+              "retained_bpe": 4020,
+              "available_bpe": 5847,
+              "fraction": 0.6875320677270395
+            },
+            "delete_gap": {
+              "retained_bpe": 579,
+              "available_bpe": 1047,
+              "fraction": 0.5530085959885387
+            },
+            "actual_edits": {
+              "retained_bpe": 34110,
+              "available_bpe": 57209,
+              "fraction": 0.5962348581516894
+            }
+          },
+          "short": {
+            "replace": {
+              "retained_bpe": 14746,
+              "available_bpe": 14746,
+              "fraction": 1.0
+            },
+            "delete": {
+              "retained_bpe": 650,
+              "available_bpe": 650,
+              "fraction": 1.0
+            },
+            "insert": {
+              "retained_bpe": 4130,
+              "available_bpe": 4130,
+              "fraction": 1.0
+            },
+            "insert_gap": {
+              "retained_bpe": 3156,
+              "available_bpe": 3156,
+              "fraction": 1.0
+            },
+            "delete_gap": {
+              "retained_bpe": 556,
+              "available_bpe": 556,
+              "fraction": 1.0
+            },
+            "actual_edits": {
+              "retained_bpe": 19526,
+              "available_bpe": 19526,
+              "fraction": 1.0
+            }
+          },
+          "511-1020": {
+            "replace": {
+              "retained_bpe": 8859,
+              "available_bpe": 11057,
+              "fraction": 0.8012119019625576
+            },
+            "delete": {
+              "retained_bpe": 591,
+              "available_bpe": 717,
+              "fraction": 0.8242677824267782
+            },
+            "insert": {
+              "retained_bpe": 3554,
+              "available_bpe": 4232,
+              "fraction": 0.8397920604914934
+            },
+            "insert_gap": {
+              "retained_bpe": 1539,
+              "available_bpe": 1876,
+              "fraction": 0.820362473347548
+            },
+            "delete_gap": {
+              "retained_bpe": 228,
+              "available_bpe": 295,
+              "fraction": 0.7728813559322034
+            },
+            "actual_edits": {
+              "retained_bpe": 13004,
+              "available_bpe": 16006,
+              "fraction": 0.812445333000125
+            }
+          },
+          "1021-2040": {
+            "replace": {
+              "retained_bpe": 8483,
+              "available_bpe": 15301,
+              "fraction": 0.5544082086138161
+            },
+            "delete": {
+              "retained_bpe": 728,
+              "available_bpe": 1477,
+              "fraction": 0.4928909952606635
+            },
+            "insert": {
+              "retained_bpe": 3323,
+              "available_bpe": 5537,
+              "fraction": 0.6001444825717898
+            },
+            "insert_gap": {
+              "retained_bpe": 1310,
+              "available_bpe": 2015,
+              "fraction": 0.6501240694789082
+            },
+            "delete_gap": {
+              "retained_bpe": 204,
+              "available_bpe": 358,
+              "fraction": 0.5698324022346368
+            },
+            "actual_edits": {
+              "retained_bpe": 12534,
+              "available_bpe": 22315,
+              "fraction": 0.5616849652699978
+            }
+          },
+          "2041+": {
+            "replace": {
+              "retained_bpe": 5649,
+              "available_bpe": 13189,
+              "fraction": 0.42831147168094624
+            },
+            "delete": {
+              "retained_bpe": 517,
+              "available_bpe": 1022,
+              "fraction": 0.5058708414872799
+            },
+            "insert": {
+              "retained_bpe": 2406,
+              "available_bpe": 4677,
+              "fraction": 0.514432328415651
+            },
+            "insert_gap": {
+              "retained_bpe": 1171,
+              "available_bpe": 1956,
+              "fraction": 0.5986707566462167
+            },
+            "delete_gap": {
+              "retained_bpe": 147,
+              "available_bpe": 394,
+              "fraction": 0.3730964467005076
+            },
+            "actual_edits": {
+              "retained_bpe": 8572,
+              "available_bpe": 18888,
+              "fraction": 0.45383312155866157
+            }
+          }
+        },
+        "selection": {
+          "overall": {
+            "functions": 1124,
+            "input_tokens": 467178,
+            "source_tokens": 458172,
+            "full_budget": 653,
+            "pairs": 562,
+            "identical_inputs": 2,
+            "identical_fraction": 0.0035587188612099642,
+            "syntax_analyzed": 651,
+            "syntax_errors": 192,
+            "relations": {
+              "condition": {
+                "available": 98010,
+                "context_kept": 40016,
+                "both_kept": 13250
+              },
+              "declaration": {
+                "available": 45010,
+                "context_kept": 14429,
+                "both_kept": 6170
+              },
+              "assignment": {
+                "available": 19638,
+                "context_kept": 6175,
+                "both_kept": 2466
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "long": {
+            "functions": 671,
+            "input_tokens": 343178,
+            "source_tokens": 335078,
+            "full_budget": 651,
+            "pairs": 344,
+            "identical_inputs": 2,
+            "identical_fraction": 0.005813953488372093,
+            "syntax_analyzed": 651,
+            "syntax_errors": 192,
+            "relations": {
+              "condition": {
+                "available": 98010,
+                "context_kept": 40016,
+                "both_kept": 13250
+              },
+              "declaration": {
+                "available": 45010,
+                "context_kept": 14429,
+                "both_kept": 6170
+              },
+              "assignment": {
+                "available": 19638,
+                "context_kept": 6175,
+                "both_kept": 2466
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "short": {
+            "functions": 453,
+            "input_tokens": 124000,
+            "source_tokens": 123094,
+            "full_budget": 2,
+            "pairs": 218,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 0,
+            "syntax_errors": 0,
+            "relations": {
+              "condition": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "declaration": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "assignment": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "511-1020": {
+            "functions": 233,
+            "input_tokens": 118922,
+            "source_tokens": 116979,
+            "full_budget": 213,
+            "pairs": 119,
+            "identical_inputs": 2,
+            "identical_fraction": 0.01680672268907563,
+            "syntax_analyzed": 213,
+            "syntax_errors": 31,
+            "relations": {
+              "condition": {
+                "available": 6627,
+                "context_kept": 5607,
+                "both_kept": 4215
+              },
+              "declaration": {
+                "available": 5011,
+                "context_kept": 4002,
+                "both_kept": 2840
+              },
+              "assignment": {
+                "available": 1777,
+                "context_kept": 1343,
+                "both_kept": 953
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "1021-2040": {
+            "functions": 223,
+            "input_tokens": 114176,
+            "source_tokens": 111118,
+            "full_budget": 223,
+            "pairs": 116,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 223,
+            "syntax_errors": 54,
+            "relations": {
+              "condition": {
+                "available": 18369,
+                "context_kept": 10813,
+                "both_kept": 4815
+              },
+              "declaration": {
+                "available": 11350,
+                "context_kept": 5221,
+                "both_kept": 2173
+              },
+              "assignment": {
+                "available": 4407,
+                "context_kept": 2267,
+                "both_kept": 967
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "2041+": {
+            "functions": 215,
+            "input_tokens": 110080,
+            "source_tokens": 106981,
+            "full_budget": 215,
+            "pairs": 109,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 215,
+            "syntax_errors": 107,
+            "relations": {
+              "condition": {
+                "available": 73014,
+                "context_kept": 23596,
+                "both_kept": 4220
+              },
+              "declaration": {
+                "available": 28649,
+                "context_kept": 5206,
+                "both_kept": 1157
+              },
+              "assignment": {
+                "available": 13454,
+                "context_kept": 2565,
+                "both_kept": 546
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          }
+        }
+      },
+      "test": {
+        "edit_retention": {
+          "overall": {
+            "replace": {
+              "retained_bpe": 33843,
+              "available_bpe": 50525,
+              "fraction": 0.6698268184067293
+            },
+            "delete": {
+              "retained_bpe": 1761,
+              "available_bpe": 2782,
+              "fraction": 0.6329978432782171
+            },
+            "insert": {
+              "retained_bpe": 13572,
+              "available_bpe": 18967,
+              "fraction": 0.7155586017820424
+            },
+            "insert_gap": {
+              "retained_bpe": 7109,
+              "available_bpe": 9392,
+              "fraction": 0.7569207836456558
+            },
+            "delete_gap": {
+              "retained_bpe": 1105,
+              "available_bpe": 1822,
+              "fraction": 0.606476399560922
+            },
+            "actual_edits": {
+              "retained_bpe": 49176,
+              "available_bpe": 72274,
+              "fraction": 0.6804106594349282
+            }
+          },
+          "long": {
+            "replace": {
+              "retained_bpe": 23539,
+              "available_bpe": 40221,
+              "fraction": 0.5852415404887994
+            },
+            "delete": {
+              "retained_bpe": 1360,
+              "available_bpe": 2381,
+              "fraction": 0.5711885762284754
+            },
+            "insert": {
+              "retained_bpe": 10486,
+              "available_bpe": 15881,
+              "fraction": 0.6602858762042693
+            },
+            "insert_gap": {
+              "retained_bpe": 4441,
+              "available_bpe": 6724,
+              "fraction": 0.6604699583581202
+            },
+            "delete_gap": {
+              "retained_bpe": 855,
+              "available_bpe": 1572,
+              "fraction": 0.5438931297709924
+            },
+            "actual_edits": {
+              "retained_bpe": 35385,
+              "available_bpe": 58483,
+              "fraction": 0.6050476206760939
+            }
+          },
+          "short": {
+            "replace": {
+              "retained_bpe": 10304,
+              "available_bpe": 10304,
+              "fraction": 1.0
+            },
+            "delete": {
+              "retained_bpe": 401,
+              "available_bpe": 401,
+              "fraction": 1.0
+            },
+            "insert": {
+              "retained_bpe": 3086,
+              "available_bpe": 3086,
+              "fraction": 1.0
+            },
+            "insert_gap": {
+              "retained_bpe": 2668,
+              "available_bpe": 2668,
+              "fraction": 1.0
+            },
+            "delete_gap": {
+              "retained_bpe": 250,
+              "available_bpe": 250,
+              "fraction": 1.0
+            },
+            "actual_edits": {
+              "retained_bpe": 13791,
+              "available_bpe": 13791,
+              "fraction": 1.0
+            }
+          },
+          "511-1020": {
+            "replace": {
+              "retained_bpe": 10710,
+              "available_bpe": 13221,
+              "fraction": 0.810074880871341
+            },
+            "delete": {
+              "retained_bpe": 623,
+              "available_bpe": 740,
+              "fraction": 0.8418918918918918
+            },
+            "insert": {
+              "retained_bpe": 4510,
+              "available_bpe": 5678,
+              "fraction": 0.7942937654103558
+            },
+            "insert_gap": {
+              "retained_bpe": 1602,
+              "available_bpe": 1924,
+              "fraction": 0.8326403326403327
+            },
+            "delete_gap": {
+              "retained_bpe": 273,
+              "available_bpe": 351,
+              "fraction": 0.7777777777777778
+            },
+            "actual_edits": {
+              "retained_bpe": 15843,
+              "available_bpe": 19639,
+              "fraction": 0.8067111360048882
+            }
+          },
+          "1021-2040": {
+            "replace": {
+              "retained_bpe": 6488,
+              "available_bpe": 10368,
+              "fraction": 0.6257716049382716
+            },
+            "delete": {
+              "retained_bpe": 518,
+              "available_bpe": 898,
+              "fraction": 0.576837416481069
+            },
+            "insert": {
+              "retained_bpe": 2985,
+              "available_bpe": 4741,
+              "fraction": 0.6296140054840751
+            },
+            "insert_gap": {
+              "retained_bpe": 1469,
+              "available_bpe": 2180,
+              "fraction": 0.6738532110091743
+            },
+            "delete_gap": {
+              "retained_bpe": 418,
+              "available_bpe": 577,
+              "fraction": 0.7244367417677643
+            },
+            "actual_edits": {
+              "retained_bpe": 9991,
+              "available_bpe": 16007,
+              "fraction": 0.6241644280627225
+            }
+          },
+          "2041+": {
+            "replace": {
+              "retained_bpe": 6341,
+              "available_bpe": 16632,
+              "fraction": 0.38125300625300623
+            },
+            "delete": {
+              "retained_bpe": 219,
+              "available_bpe": 743,
+              "fraction": 0.29475100942126514
+            },
+            "insert": {
+              "retained_bpe": 2991,
+              "available_bpe": 5462,
+              "fraction": 0.5476016111314537
+            },
+            "insert_gap": {
+              "retained_bpe": 1370,
+              "available_bpe": 2620,
+              "fraction": 0.5229007633587787
+            },
+            "delete_gap": {
+              "retained_bpe": 164,
+              "available_bpe": 644,
+              "fraction": 0.2546583850931677
+            },
+            "actual_edits": {
+              "retained_bpe": 9551,
+              "available_bpe": 22837,
+              "fraction": 0.4182248106143539
+            }
+          }
+        },
+        "selection": {
+          "overall": {
+            "functions": 1128,
+            "input_tokens": 483213,
+            "source_tokens": 473417,
+            "full_budget": 717,
+            "pairs": 564,
+            "identical_inputs": 1,
+            "identical_fraction": 0.0017730496453900709,
+            "syntax_analyzed": 716,
+            "syntax_errors": 248,
+            "relations": {
+              "condition": {
+                "available": 133775,
+                "context_kept": 59543,
+                "both_kept": 14318
+              },
+              "declaration": {
+                "available": 58521,
+                "context_kept": 17823,
+                "both_kept": 6995
+              },
+              "assignment": {
+                "available": 24938,
+                "context_kept": 7576,
+                "both_kept": 2543
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "long": {
+            "functions": 732,
+            "input_tokens": 374500,
+            "source_tokens": 365496,
+            "full_budget": 716,
+            "pairs": 374,
+            "identical_inputs": 1,
+            "identical_fraction": 0.00267379679144385,
+            "syntax_analyzed": 716,
+            "syntax_errors": 248,
+            "relations": {
+              "condition": {
+                "available": 133775,
+                "context_kept": 59543,
+                "both_kept": 14318
+              },
+              "declaration": {
+                "available": 58521,
+                "context_kept": 17823,
+                "both_kept": 6995
+              },
+              "assignment": {
+                "available": 24938,
+                "context_kept": 7576,
+                "both_kept": 2543
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "short": {
+            "functions": 396,
+            "input_tokens": 108713,
+            "source_tokens": 107921,
+            "full_budget": 1,
+            "pairs": 190,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 0,
+            "syntax_errors": 0,
+            "relations": {
+              "condition": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "declaration": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "assignment": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "511-1020": {
+            "functions": 254,
+            "input_tokens": 129764,
+            "source_tokens": 127518,
+            "full_budget": 238,
+            "pairs": 130,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 238,
+            "syntax_errors": 55,
+            "relations": {
+              "condition": {
+                "available": 8001,
+                "context_kept": 6339,
+                "both_kept": 4688
+              },
+              "declaration": {
+                "available": 5968,
+                "context_kept": 4697,
+                "both_kept": 3422
+              },
+              "assignment": {
+                "available": 1951,
+                "context_kept": 1603,
+                "both_kept": 1147
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "1021-2040": {
+            "functions": 224,
+            "input_tokens": 114688,
+            "source_tokens": 111718,
+            "full_budget": 224,
+            "pairs": 114,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 224,
+            "syntax_errors": 69,
+            "relations": {
+              "condition": {
+                "available": 17896,
+                "context_kept": 10008,
+                "both_kept": 4420
+              },
+              "declaration": {
+                "available": 10173,
+                "context_kept": 4978,
+                "both_kept": 2139
+              },
+              "assignment": {
+                "available": 3765,
+                "context_kept": 1867,
+                "both_kept": 727
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "2041+": {
+            "functions": 254,
+            "input_tokens": 130048,
+            "source_tokens": 126260,
+            "full_budget": 254,
+            "pairs": 130,
+            "identical_inputs": 1,
+            "identical_fraction": 0.007692307692307693,
+            "syntax_analyzed": 254,
+            "syntax_errors": 124,
+            "relations": {
+              "condition": {
+                "available": 107878,
+                "context_kept": 43196,
+                "both_kept": 5210
+              },
+              "declaration": {
+                "available": 42380,
+                "context_kept": 8148,
+                "both_kept": 1434
+              },
+              "assignment": {
+                "available": 19222,
+                "context_kept": 4106,
+                "both_kept": 669
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "predicted_region": {
+      "valid": {
+        "edit_retention": {
+          "overall": {
+            "replace": {
+              "retained_bpe": 29877,
+              "available_bpe": 54293,
+              "fraction": 0.5502919345035272
+            },
+            "delete": {
+              "retained_bpe": 1848,
+              "available_bpe": 3866,
+              "fraction": 0.47801345059493017
+            },
+            "insert": {
+              "retained_bpe": 10064,
+              "available_bpe": 18576,
+              "fraction": 0.5417743324720069
+            },
+            "insert_gap": {
+              "retained_bpe": 5617,
+              "available_bpe": 9003,
+              "fraction": 0.6239031433966455
+            },
+            "delete_gap": {
+              "retained_bpe": 895,
+              "available_bpe": 1603,
+              "fraction": 0.5583281347473488
+            },
+            "actual_edits": {
+              "retained_bpe": 41789,
+              "available_bpe": 76735,
+              "fraction": 0.5445885189287809
+            }
+          },
+          "long": {
+            "replace": {
+              "retained_bpe": 15131,
+              "available_bpe": 39547,
+              "fraction": 0.3826080360077882
+            },
+            "delete": {
+              "retained_bpe": 1198,
+              "available_bpe": 3216,
+              "fraction": 0.3725124378109453
+            },
+            "insert": {
+              "retained_bpe": 5934,
+              "available_bpe": 14446,
+              "fraction": 0.41077114772255297
+            },
+            "insert_gap": {
+              "retained_bpe": 2461,
+              "available_bpe": 5847,
+              "fraction": 0.42089960663588166
+            },
+            "delete_gap": {
+              "retained_bpe": 339,
+              "available_bpe": 1047,
+              "fraction": 0.3237822349570201
+            },
+            "actual_edits": {
+              "retained_bpe": 22263,
+              "available_bpe": 57209,
+              "fraction": 0.3891520564946075
+            }
+          },
+          "short": {
+            "replace": {
+              "retained_bpe": 14746,
+              "available_bpe": 14746,
+              "fraction": 1.0
+            },
+            "delete": {
+              "retained_bpe": 650,
+              "available_bpe": 650,
+              "fraction": 1.0
+            },
+            "insert": {
+              "retained_bpe": 4130,
+              "available_bpe": 4130,
+              "fraction": 1.0
+            },
+            "insert_gap": {
+              "retained_bpe": 3156,
+              "available_bpe": 3156,
+              "fraction": 1.0
+            },
+            "delete_gap": {
+              "retained_bpe": 556,
+              "available_bpe": 556,
+              "fraction": 1.0
+            },
+            "actual_edits": {
+              "retained_bpe": 19526,
+              "available_bpe": 19526,
+              "fraction": 1.0
+            }
+          },
+          "511-1020": {
+            "replace": {
+              "retained_bpe": 8008,
+              "available_bpe": 11057,
+              "fraction": 0.7242470832956498
+            },
+            "delete": {
+              "retained_bpe": 544,
+              "available_bpe": 717,
+              "fraction": 0.7587168758716876
+            },
+            "insert": {
+              "retained_bpe": 3282,
+              "available_bpe": 4232,
+              "fraction": 0.7755198487712666
+            },
+            "insert_gap": {
+              "retained_bpe": 1306,
+              "available_bpe": 1876,
+              "fraction": 0.6961620469083155
+            },
+            "delete_gap": {
+              "retained_bpe": 222,
+              "available_bpe": 295,
+              "fraction": 0.752542372881356
+            },
+            "actual_edits": {
+              "retained_bpe": 11834,
+              "available_bpe": 16006,
+              "fraction": 0.7393477445957766
+            }
+          },
+          "1021-2040": {
+            "replace": {
+              "retained_bpe": 5611,
+              "available_bpe": 15301,
+              "fraction": 0.36670805829684333
+            },
+            "delete": {
+              "retained_bpe": 423,
+              "available_bpe": 1477,
+              "fraction": 0.2863913337846987
+            },
+            "insert": {
+              "retained_bpe": 1657,
+              "available_bpe": 5537,
+              "fraction": 0.2992595268195774
+            },
+            "insert_gap": {
+              "retained_bpe": 748,
+              "available_bpe": 2015,
+              "fraction": 0.37121588089330027
+            },
+            "delete_gap": {
+              "retained_bpe": 82,
+              "available_bpe": 358,
+              "fraction": 0.22905027932960895
+            },
+            "actual_edits": {
+              "retained_bpe": 7691,
+              "available_bpe": 22315,
+              "fraction": 0.34465606094555234
+            }
+          },
+          "2041+": {
+            "replace": {
+              "retained_bpe": 1512,
+              "available_bpe": 13189,
+              "fraction": 0.1146409887027068
+            },
+            "delete": {
+              "retained_bpe": 231,
+              "available_bpe": 1022,
+              "fraction": 0.22602739726027396
+            },
+            "insert": {
+              "retained_bpe": 995,
+              "available_bpe": 4677,
+              "fraction": 0.2127432114603378
+            },
+            "insert_gap": {
+              "retained_bpe": 407,
+              "available_bpe": 1956,
+              "fraction": 0.20807770961145194
+            },
+            "delete_gap": {
+              "retained_bpe": 35,
+              "available_bpe": 394,
+              "fraction": 0.08883248730964467
+            },
+            "actual_edits": {
+              "retained_bpe": 2738,
+              "available_bpe": 18888,
+              "fraction": 0.14495976281236764
+            }
+          }
+        },
+        "selection": {
+          "overall": {
+            "functions": 1124,
+            "input_tokens": 467178,
+            "source_tokens": 456211,
+            "full_budget": 653,
+            "pairs": 562,
+            "identical_inputs": 27,
+            "identical_fraction": 0.04804270462633452,
+            "syntax_analyzed": 651,
+            "syntax_errors": 192,
+            "relations": {
+              "condition": {
+                "available": 98010,
+                "context_kept": 42252,
+                "both_kept": 13717
+              },
+              "declaration": {
+                "available": 45010,
+                "context_kept": 14841,
+                "both_kept": 6606
+              },
+              "assignment": {
+                "available": 19638,
+                "context_kept": 5665,
+                "both_kept": 2415
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "long": {
+            "functions": 671,
+            "input_tokens": 343178,
+            "source_tokens": 333117,
+            "full_budget": 651,
+            "pairs": 344,
+            "identical_inputs": 27,
+            "identical_fraction": 0.07848837209302326,
+            "syntax_analyzed": 651,
+            "syntax_errors": 192,
+            "relations": {
+              "condition": {
+                "available": 98010,
+                "context_kept": 42252,
+                "both_kept": 13717
+              },
+              "declaration": {
+                "available": 45010,
+                "context_kept": 14841,
+                "both_kept": 6606
+              },
+              "assignment": {
+                "available": 19638,
+                "context_kept": 5665,
+                "both_kept": 2415
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "short": {
+            "functions": 453,
+            "input_tokens": 124000,
+            "source_tokens": 123094,
+            "full_budget": 2,
+            "pairs": 218,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 0,
+            "syntax_errors": 0,
+            "relations": {
+              "condition": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "declaration": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "assignment": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "511-1020": {
+            "functions": 233,
+            "input_tokens": 118922,
+            "source_tokens": 116266,
+            "full_budget": 213,
+            "pairs": 119,
+            "identical_inputs": 1,
+            "identical_fraction": 0.008403361344537815,
+            "syntax_analyzed": 213,
+            "syntax_errors": 31,
+            "relations": {
+              "condition": {
+                "available": 6627,
+                "context_kept": 5731,
+                "both_kept": 4312
+              },
+              "declaration": {
+                "available": 5011,
+                "context_kept": 4199,
+                "both_kept": 2987
+              },
+              "assignment": {
+                "available": 1777,
+                "context_kept": 1363,
+                "both_kept": 1002
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "1021-2040": {
+            "functions": 223,
+            "input_tokens": 114176,
+            "source_tokens": 110529,
+            "full_budget": 223,
+            "pairs": 116,
+            "identical_inputs": 12,
+            "identical_fraction": 0.10344827586206896,
+            "syntax_analyzed": 223,
+            "syntax_errors": 54,
+            "relations": {
+              "condition": {
+                "available": 18369,
+                "context_kept": 11845,
+                "both_kept": 5102
+              },
+              "declaration": {
+                "available": 11350,
+                "context_kept": 5419,
+                "both_kept": 2331
+              },
+              "assignment": {
+                "available": 4407,
+                "context_kept": 2224,
+                "both_kept": 921
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "2041+": {
+            "functions": 215,
+            "input_tokens": 110080,
+            "source_tokens": 106322,
+            "full_budget": 215,
+            "pairs": 109,
+            "identical_inputs": 14,
+            "identical_fraction": 0.12844036697247707,
+            "syntax_analyzed": 215,
+            "syntax_errors": 107,
+            "relations": {
+              "condition": {
+                "available": 73014,
+                "context_kept": 24676,
+                "both_kept": 4303
+              },
+              "declaration": {
+                "available": 28649,
+                "context_kept": 5223,
+                "both_kept": 1288
+              },
+              "assignment": {
+                "available": 13454,
+                "context_kept": 2078,
+                "both_kept": 492
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          }
+        }
+      },
+      "test": {
+        "edit_retention": {
+          "overall": {
+            "replace": {
+              "retained_bpe": 25853,
+              "available_bpe": 50525,
+              "fraction": 0.5116872835230084
+            },
+            "delete": {
+              "retained_bpe": 1230,
+              "available_bpe": 2782,
+              "fraction": 0.4421279654924515
+            },
+            "insert": {
+              "retained_bpe": 9364,
+              "available_bpe": 18967,
+              "fraction": 0.4936995834871092
+            },
+            "insert_gap": {
+              "retained_bpe": 5240,
+              "available_bpe": 9392,
+              "fraction": 0.5579216354344123
+            },
+            "delete_gap": {
+              "retained_bpe": 898,
+              "available_bpe": 1822,
+              "fraction": 0.49286498353457736
+            },
+            "actual_edits": {
+              "retained_bpe": 36447,
+              "available_bpe": 72274,
+              "fraction": 0.5042892326424441
+            }
+          },
+          "long": {
+            "replace": {
+              "retained_bpe": 15549,
+              "available_bpe": 40221,
+              "fraction": 0.3865890952487506
+            },
+            "delete": {
+              "retained_bpe": 829,
+              "available_bpe": 2381,
+              "fraction": 0.34817303653926923
+            },
+            "insert": {
+              "retained_bpe": 6278,
+              "available_bpe": 15881,
+              "fraction": 0.39531515647629245
+            },
+            "insert_gap": {
+              "retained_bpe": 2572,
+              "available_bpe": 6724,
+              "fraction": 0.3825104104699584
+            },
+            "delete_gap": {
+              "retained_bpe": 648,
+              "available_bpe": 1572,
+              "fraction": 0.4122137404580153
+            },
+            "actual_edits": {
+              "retained_bpe": 22656,
+              "available_bpe": 58483,
+              "fraction": 0.38739462749858933
+            }
+          },
+          "short": {
+            "replace": {
+              "retained_bpe": 10304,
+              "available_bpe": 10304,
+              "fraction": 1.0
+            },
+            "delete": {
+              "retained_bpe": 401,
+              "available_bpe": 401,
+              "fraction": 1.0
+            },
+            "insert": {
+              "retained_bpe": 3086,
+              "available_bpe": 3086,
+              "fraction": 1.0
+            },
+            "insert_gap": {
+              "retained_bpe": 2668,
+              "available_bpe": 2668,
+              "fraction": 1.0
+            },
+            "delete_gap": {
+              "retained_bpe": 250,
+              "available_bpe": 250,
+              "fraction": 1.0
+            },
+            "actual_edits": {
+              "retained_bpe": 13791,
+              "available_bpe": 13791,
+              "fraction": 1.0
+            }
+          },
+          "511-1020": {
+            "replace": {
+              "retained_bpe": 9384,
+              "available_bpe": 13221,
+              "fraction": 0.7097798956206036
+            },
+            "delete": {
+              "retained_bpe": 497,
+              "available_bpe": 740,
+              "fraction": 0.6716216216216216
+            },
+            "insert": {
+              "retained_bpe": 3988,
+              "available_bpe": 5678,
+              "fraction": 0.7023599859105318
+            },
+            "insert_gap": {
+              "retained_bpe": 1398,
+              "available_bpe": 1924,
+              "fraction": 0.7266112266112266
+            },
+            "delete_gap": {
+              "retained_bpe": 243,
+              "available_bpe": 351,
+              "fraction": 0.6923076923076923
+            },
+            "actual_edits": {
+              "retained_bpe": 13869,
+              "available_bpe": 19639,
+              "fraction": 0.7061968532002648
+            }
+          },
+          "1021-2040": {
+            "replace": {
+              "retained_bpe": 3967,
+              "available_bpe": 10368,
+              "fraction": 0.3826195987654321
+            },
+            "delete": {
+              "retained_bpe": 295,
+              "available_bpe": 898,
+              "fraction": 0.3285077951002227
+            },
+            "insert": {
+              "retained_bpe": 1515,
+              "available_bpe": 4741,
+              "fraction": 0.3195528369542291
+            },
+            "insert_gap": {
+              "retained_bpe": 900,
+              "available_bpe": 2180,
+              "fraction": 0.41284403669724773
+            },
+            "delete_gap": {
+              "retained_bpe": 306,
+              "available_bpe": 577,
+              "fraction": 0.5303292894280762
+            },
+            "actual_edits": {
+              "retained_bpe": 5777,
+              "available_bpe": 16007,
+              "fraction": 0.3609046042356469
+            }
+          },
+          "2041+": {
+            "replace": {
+              "retained_bpe": 2198,
+              "available_bpe": 16632,
+              "fraction": 0.13215488215488216
+            },
+            "delete": {
+              "retained_bpe": 37,
+              "available_bpe": 743,
+              "fraction": 0.04979811574697174
+            },
+            "insert": {
+              "retained_bpe": 775,
+              "available_bpe": 5462,
+              "fraction": 0.14188941779567923
+            },
+            "insert_gap": {
+              "retained_bpe": 274,
+              "available_bpe": 2620,
+              "fraction": 0.10458015267175573
+            },
+            "delete_gap": {
+              "retained_bpe": 99,
+              "available_bpe": 644,
+              "fraction": 0.15372670807453417
+            },
+            "actual_edits": {
+              "retained_bpe": 3010,
+              "available_bpe": 22837,
+              "fraction": 0.13180365196829708
+            }
+          }
+        },
+        "selection": {
+          "overall": {
+            "functions": 1128,
+            "input_tokens": 483213,
+            "source_tokens": 471384,
+            "full_budget": 717,
+            "pairs": 564,
+            "identical_inputs": 23,
+            "identical_fraction": 0.040780141843971635,
+            "syntax_analyzed": 716,
+            "syntax_errors": 248,
+            "relations": {
+              "condition": {
+                "available": 133775,
+                "context_kept": 59018,
+                "both_kept": 14988
+              },
+              "declaration": {
+                "available": 58521,
+                "context_kept": 16151,
+                "both_kept": 7446
+              },
+              "assignment": {
+                "available": 24938,
+                "context_kept": 6064,
+                "both_kept": 2534
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "long": {
+            "functions": 732,
+            "input_tokens": 374500,
+            "source_tokens": 363463,
+            "full_budget": 716,
+            "pairs": 374,
+            "identical_inputs": 23,
+            "identical_fraction": 0.06149732620320856,
+            "syntax_analyzed": 716,
+            "syntax_errors": 248,
+            "relations": {
+              "condition": {
+                "available": 133775,
+                "context_kept": 59018,
+                "both_kept": 14988
+              },
+              "declaration": {
+                "available": 58521,
+                "context_kept": 16151,
+                "both_kept": 7446
+              },
+              "assignment": {
+                "available": 24938,
+                "context_kept": 6064,
+                "both_kept": 2534
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "short": {
+            "functions": 396,
+            "input_tokens": 108713,
+            "source_tokens": 107921,
+            "full_budget": 1,
+            "pairs": 190,
+            "identical_inputs": 0,
+            "identical_fraction": 0.0,
+            "syntax_analyzed": 0,
+            "syntax_errors": 0,
+            "relations": {
+              "condition": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "declaration": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "assignment": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "511-1020": {
+            "functions": 254,
+            "input_tokens": 129764,
+            "source_tokens": 126686,
+            "full_budget": 238,
+            "pairs": 130,
+            "identical_inputs": 1,
+            "identical_fraction": 0.007692307692307693,
+            "syntax_analyzed": 238,
+            "syntax_errors": 55,
+            "relations": {
+              "condition": {
+                "available": 8001,
+                "context_kept": 6765,
+                "both_kept": 5010
+              },
+              "declaration": {
+                "available": 5968,
+                "context_kept": 4960,
+                "both_kept": 3595
+              },
+              "assignment": {
+                "available": 1951,
+                "context_kept": 1595,
+                "both_kept": 1144
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "1021-2040": {
+            "functions": 224,
+            "input_tokens": 114688,
+            "source_tokens": 111103,
+            "full_budget": 224,
+            "pairs": 114,
+            "identical_inputs": 4,
+            "identical_fraction": 0.03508771929824561,
+            "syntax_analyzed": 224,
+            "syntax_errors": 69,
+            "relations": {
+              "condition": {
+                "available": 17896,
+                "context_kept": 10859,
+                "both_kept": 4853
+              },
+              "declaration": {
+                "available": 10173,
+                "context_kept": 5555,
+                "both_kept": 2515
+              },
+              "assignment": {
+                "available": 3765,
+                "context_kept": 2028,
+                "both_kept": 867
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          },
+          "2041+": {
+            "functions": 254,
+            "input_tokens": 130048,
+            "source_tokens": 125674,
+            "full_budget": 254,
+            "pairs": 130,
+            "identical_inputs": 18,
+            "identical_fraction": 0.13846153846153847,
+            "syntax_analyzed": 254,
+            "syntax_errors": 124,
+            "relations": {
+              "condition": {
+                "available": 107878,
+                "context_kept": 41394,
+                "both_kept": 5125
+              },
+              "declaration": {
+                "available": 42380,
+                "context_kept": 5636,
+                "both_kept": 1336
+              },
+              "assignment": {
+                "available": 19222,
+                "context_kept": 2441,
+                "both_kept": 523
+              },
+              "completion": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              },
+              "neighbor": {
+                "available": 0,
+                "context_kept": 0,
+                "both_kept": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "archived_test_controls": {
+    "uniform_sampling": {
+      "groups": {
+        "overall": {
+          "accuracy": 0.5434397163120568,
+          "precision": 0.5515789473684211,
+          "recall": 0.4645390070921986,
+          "f1": 0.5043310875842156,
+          "mcc": 0.08798176793333802,
+          "auc": 0.5599205900105628,
+          "auprc": 0.5644493841857469,
+          "tp": 262,
+          "tn": 351,
+          "fp": 213,
+          "fn": 302,
+          "confusion_matrix": [
+            [
+              351,
+              213
+            ],
+            [
+              302,
+              262
+            ]
+          ],
+          "samples": 1128,
+          "threshold": 0.5
+        },
+        "long": {
+          "accuracy": 0.5245901639344263,
+          "precision": 0.5225563909774437,
+          "recall": 0.3861111111111111,
+          "f1": 0.4440894568690096,
+          "mcc": 0.04647563097671363,
+          "auc": 0.531253733572282,
+          "auprc": 0.5260413934378819,
+          "tp": 139,
+          "tn": 245,
+          "fp": 127,
+          "fn": 221,
+          "confusion_matrix": [
+            [
+              245,
+              127
+            ],
+            [
+              221,
+              139
+            ]
+          ],
+          "samples": 732,
+          "threshold": 0.5
+        },
+        "short": {
+          "accuracy": 0.5782828282828283,
+          "precision": 0.5885167464114832,
+          "recall": 0.6029411764705882,
+          "f1": 0.5956416464891041,
+          "mcc": 0.1551929964418506,
+          "auc": 0.603375204248366,
+          "auprc": 0.6100136308565969,
+          "tp": 123,
+          "tn": 106,
+          "fp": 86,
+          "fn": 81,
+          "confusion_matrix": [
+            [
+              106,
+              86
+            ],
+            [
+              81,
+              123
+            ]
+          ],
+          "samples": 396,
+          "threshold": 0.5
+        },
+        "511-1020": {
+          "accuracy": 0.5551181102362205,
+          "precision": 0.5617977528089888,
+          "recall": 0.4032258064516129,
+          "f1": 0.4694835680751174,
+          "mcc": 0.10815181889470854,
+          "auc": 0.5782258064516128,
+          "auprc": 0.5834194948071516,
+          "tp": 50,
+          "tn": 91,
+          "fp": 39,
+          "fn": 74,
+          "confusion_matrix": [
+            [
+              91,
+              39
+            ],
+            [
+              74,
+              50
+            ]
+          ],
+          "samples": 254,
+          "threshold": 0.5
+        },
+        "1021-2040": {
+          "accuracy": 0.5357142857142857,
+          "precision": 0.5512820512820513,
+          "recall": 0.38392857142857145,
+          "f1": 0.4526315789473685,
+          "mcc": 0.07496633127898335,
+          "auc": 0.5420121173469388,
+          "auprc": 0.5438556871791961,
+          "tp": 43,
+          "tn": 77,
+          "fp": 35,
+          "fn": 69,
+          "confusion_matrix": [
+            [
+              77,
+              35
+            ],
+            [
+              69,
+              43
+            ]
+          ],
+          "samples": 224,
+          "threshold": 0.5
+        },
+        "2041+": {
+          "accuracy": 0.484251968503937,
+          "precision": 0.46464646464646464,
+          "recall": 0.3709677419354839,
+          "f1": 0.4125560538116592,
+          "mcc": -0.03764053101349859,
+          "auc": 0.4728598014888337,
+          "auprc": 0.4716825854106098,
+          "tp": 46,
+          "tn": 77,
+          "fp": 53,
+          "fn": 78,
+          "confusion_matrix": [
+            [
+              77,
+              53
+            ],
+            [
+              78,
+              46
+            ]
+          ],
+          "samples": 254,
+          "threshold": 0.5
+        }
+      },
+      "selection": {
+        "overall": {
+          "functions": 1128,
+          "input_tokens": 483213,
+          "source_tokens": 476601,
+          "full_budget": 717,
+          "pairs": 564,
+          "identical_inputs": 20,
+          "identical_fraction": 0.03546099290780142,
+          "syntax_analyzed": 716,
+          "syntax_errors": 248,
+          "relations": {
+            "condition": {
+              "available": 13762,
+              "context_kept": 1798,
+              "both_kept": 1728
+            },
+            "declaration": {
+              "available": 8409,
+              "context_kept": 1675,
+              "both_kept": 1617
+            },
+            "assignment": {
+              "available": 2546,
+              "context_kept": 382,
+              "both_kept": 366
+            },
+            "completion": {
+              "available": 619,
+              "context_kept": 52,
+              "both_kept": 52
+            },
+            "neighbor": {
+              "available": 2125,
+              "context_kept": 271,
+              "both_kept": 241
+            }
+          }
+        },
+        "long": {
+          "functions": 732,
+          "input_tokens": 374500,
+          "source_tokens": 368680,
+          "full_budget": 716,
+          "pairs": 374,
+          "identical_inputs": 20,
+          "identical_fraction": 0.053475935828877004,
+          "syntax_analyzed": 716,
+          "syntax_errors": 248,
+          "relations": {
+            "condition": {
+              "available": 13762,
+              "context_kept": 1798,
+              "both_kept": 1728
+            },
+            "declaration": {
+              "available": 8409,
+              "context_kept": 1675,
+              "both_kept": 1617
+            },
+            "assignment": {
+              "available": 2546,
+              "context_kept": 382,
+              "both_kept": 366
+            },
+            "completion": {
+              "available": 619,
+              "context_kept": 52,
+              "both_kept": 52
+            },
+            "neighbor": {
+              "available": 2125,
+              "context_kept": 271,
+              "both_kept": 241
+            }
+          }
+        },
+        "short": {
+          "functions": 396,
+          "input_tokens": 108713,
+          "source_tokens": 107921,
+          "full_budget": 1,
+          "pairs": 190,
+          "identical_inputs": 0,
+          "identical_fraction": 0.0,
+          "syntax_analyzed": 0,
+          "syntax_errors": 0,
+          "relations": {
+            "condition": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "declaration": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "assignment": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "completion": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "neighbor": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            }
+          }
+        },
+        "511-1020": {
+          "functions": 254,
+          "input_tokens": 129764,
+          "source_tokens": 128241,
+          "full_budget": 238,
+          "pairs": 130,
+          "identical_inputs": 2,
+          "identical_fraction": 0.015384615384615385,
+          "syntax_analyzed": 238,
+          "syntax_errors": 55,
+          "relations": {
+            "condition": {
+              "available": 2112,
+              "context_kept": 886,
+              "both_kept": 855
+            },
+            "declaration": {
+              "available": 1706,
+              "context_kept": 795,
+              "both_kept": 781
+            },
+            "assignment": {
+              "available": 472,
+              "context_kept": 223,
+              "both_kept": 221
+            },
+            "completion": {
+              "available": 172,
+              "context_kept": 48,
+              "both_kept": 48
+            },
+            "neighbor": {
+              "available": 715,
+              "context_kept": 240,
+              "both_kept": 221
+            }
+          }
+        },
+        "1021-2040": {
+          "functions": 224,
+          "input_tokens": 114688,
+          "source_tokens": 112677,
+          "full_budget": 224,
+          "pairs": 114,
+          "identical_inputs": 5,
+          "identical_fraction": 0.043859649122807015,
+          "syntax_analyzed": 224,
+          "syntax_errors": 69,
+          "relations": {
+            "condition": {
+              "available": 4023,
+              "context_kept": 569,
+              "both_kept": 547
+            },
+            "declaration": {
+              "available": 2887,
+              "context_kept": 591,
+              "both_kept": 564
+            },
+            "assignment": {
+              "available": 798,
+              "context_kept": 90,
+              "both_kept": 83
+            },
+            "completion": {
+              "available": 199,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "neighbor": {
+              "available": 726,
+              "context_kept": 24,
+              "both_kept": 13
+            }
+          }
+        },
+        "2041+": {
+          "functions": 254,
+          "input_tokens": 130048,
+          "source_tokens": 127762,
+          "full_budget": 254,
+          "pairs": 130,
+          "identical_inputs": 13,
+          "identical_fraction": 0.1,
+          "syntax_analyzed": 254,
+          "syntax_errors": 124,
+          "relations": {
+            "condition": {
+              "available": 7627,
+              "context_kept": 343,
+              "both_kept": 326
+            },
+            "declaration": {
+              "available": 3816,
+              "context_kept": 289,
+              "both_kept": 272
+            },
+            "assignment": {
+              "available": 1276,
+              "context_kept": 69,
+              "both_kept": 62
+            },
+            "completion": {
+              "available": 248,
+              "context_kept": 4,
+              "both_kept": 4
+            },
+            "neighbor": {
+              "available": 684,
+              "context_kept": 7,
+              "both_kept": 7
+            }
+          }
+        }
+      },
+      "edit_retention": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 26527,
+            "available_bpe": 50525,
+            "fraction": 0.5250272142503711
+          },
+          "delete": {
+            "retained_bpe": 1228,
+            "available_bpe": 2782,
+            "fraction": 0.4414090582314881
+          },
+          "insert": {
+            "retained_bpe": 9640,
+            "available_bpe": 18967,
+            "fraction": 0.5082511730901038
+          },
+          "insert_gap": {
+            "retained_bpe": 5173,
+            "available_bpe": 9392,
+            "fraction": 0.5507879045996593
+          },
+          "delete_gap": {
+            "retained_bpe": 889,
+            "available_bpe": 1822,
+            "fraction": 0.48792535675082327
+          },
+          "actual_edits": {
+            "retained_bpe": 37395,
+            "available_bpe": 72274,
+            "fraction": 0.5174059827877245
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 16223,
+            "available_bpe": 40221,
+            "fraction": 0.40334651052932546
+          },
+          "delete": {
+            "retained_bpe": 827,
+            "available_bpe": 2381,
+            "fraction": 0.3473330533389332
+          },
+          "insert": {
+            "retained_bpe": 6554,
+            "available_bpe": 15881,
+            "fraction": 0.41269441470940116
+          },
+          "insert_gap": {
+            "retained_bpe": 2505,
+            "available_bpe": 6724,
+            "fraction": 0.3725461035098156
+          },
+          "delete_gap": {
+            "retained_bpe": 639,
+            "available_bpe": 1572,
+            "fraction": 0.4064885496183206
+          },
+          "actual_edits": {
+            "retained_bpe": 23604,
+            "available_bpe": 58483,
+            "fraction": 0.40360446625515106
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 10304,
+            "available_bpe": 10304,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 401,
+            "available_bpe": 401,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 3086,
+            "available_bpe": 3086,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 2668,
+            "available_bpe": 2668,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 250,
+            "available_bpe": 250,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 13791,
+            "available_bpe": 13791,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 9753,
+            "available_bpe": 13221,
+            "fraction": 0.7376900385749944
+          },
+          "delete": {
+            "retained_bpe": 521,
+            "available_bpe": 740,
+            "fraction": 0.7040540540540541
+          },
+          "insert": {
+            "retained_bpe": 3816,
+            "available_bpe": 5678,
+            "fraction": 0.6720676294469884
+          },
+          "insert_gap": {
+            "retained_bpe": 1405,
+            "available_bpe": 1924,
+            "fraction": 0.7302494802494802
+          },
+          "delete_gap": {
+            "retained_bpe": 256,
+            "available_bpe": 351,
+            "fraction": 0.7293447293447294
+          },
+          "actual_edits": {
+            "retained_bpe": 14090,
+            "available_bpe": 19639,
+            "fraction": 0.7174499719945008
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 3978,
+            "available_bpe": 10368,
+            "fraction": 0.3836805555555556
+          },
+          "delete": {
+            "retained_bpe": 214,
+            "available_bpe": 898,
+            "fraction": 0.2383073496659243
+          },
+          "insert": {
+            "retained_bpe": 1858,
+            "available_bpe": 4741,
+            "fraction": 0.3919004429445265
+          },
+          "insert_gap": {
+            "retained_bpe": 823,
+            "available_bpe": 2180,
+            "fraction": 0.3775229357798165
+          },
+          "delete_gap": {
+            "retained_bpe": 263,
+            "available_bpe": 577,
+            "fraction": 0.4558058925476603
+          },
+          "actual_edits": {
+            "retained_bpe": 6050,
+            "available_bpe": 16007,
+            "fraction": 0.37795964265633786
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 2492,
+            "available_bpe": 16632,
+            "fraction": 0.14983164983164984
+          },
+          "delete": {
+            "retained_bpe": 92,
+            "available_bpe": 743,
+            "fraction": 0.12382234185733512
+          },
+          "insert": {
+            "retained_bpe": 880,
+            "available_bpe": 5462,
+            "fraction": 0.16111314536799706
+          },
+          "insert_gap": {
+            "retained_bpe": 277,
+            "available_bpe": 2620,
+            "fraction": 0.10572519083969466
+          },
+          "delete_gap": {
+            "retained_bpe": 120,
+            "available_bpe": 644,
+            "fraction": 0.18633540372670807
+          },
+          "actual_edits": {
+            "retained_bpe": 3464,
+            "available_bpe": 22837,
+            "fraction": 0.1516836712352761
+          }
+        }
+      },
+      "shared_candidate_relations": {
+        "overall": {
+          "condition": {
+            "available": 133775,
+            "both_kept": 9434
+          },
+          "declaration": {
+            "available": 58521,
+            "both_kept": 5038
+          },
+          "assignment": {
+            "available": 24938,
+            "both_kept": 2030
+          }
+        },
+        "long": {
+          "condition": {
+            "available": 133775,
+            "both_kept": 9434
+          },
+          "declaration": {
+            "available": 58521,
+            "both_kept": 5038
+          },
+          "assignment": {
+            "available": 24938,
+            "both_kept": 2030
+          }
+        },
+        "short": {
+          "condition": {
+            "available": 0,
+            "both_kept": 0
+          },
+          "declaration": {
+            "available": 0,
+            "both_kept": 0
+          },
+          "assignment": {
+            "available": 0,
+            "both_kept": 0
+          }
+        },
+        "511-1020": {
+          "condition": {
+            "available": 8001,
+            "both_kept": 4140
+          },
+          "declaration": {
+            "available": 5968,
+            "both_kept": 3090
+          },
+          "assignment": {
+            "available": 1951,
+            "both_kept": 1033
+          }
+        },
+        "1021-2040": {
+          "condition": {
+            "available": 17896,
+            "both_kept": 2962
+          },
+          "declaration": {
+            "available": 10173,
+            "both_kept": 1428
+          },
+          "assignment": {
+            "available": 3765,
+            "both_kept": 599
+          }
+        },
+        "2041+": {
+          "condition": {
+            "available": 107878,
+            "both_kept": 2332
+          },
+          "declaration": {
+            "available": 42380,
+            "both_kept": 520
+          },
+          "assignment": {
+            "available": 19222,
+            "both_kept": 398
+          }
+        }
+      },
+      "preparation_seconds": {
+        "train": 56.91354727797443,
+        "valid": 6.33714429900283,
+        "test": 7.86391704599373
+      },
+      "inference_seconds": 4.803452986991033
+    },
+    "context_aware": {
+      "groups": {
+        "overall": {
+          "accuracy": 0.5558510638297872,
+          "precision": 0.5877437325905293,
+          "recall": 0.374113475177305,
+          "f1": 0.457204767063922,
+          "mcc": 0.11990302923302007,
+          "auc": 0.559068645943363,
+          "auprc": 0.5575438573270052,
+          "tp": 211,
+          "tn": 416,
+          "fp": 148,
+          "fn": 353,
+          "confusion_matrix": [
+            [
+              416,
+              148
+            ],
+            [
+              353,
+              211
+            ]
+          ],
+          "samples": 1128,
+          "threshold": 0.5
+        },
+        "long": {
+          "accuracy": 0.5450819672131147,
+          "precision": 0.5699481865284974,
+          "recall": 0.3055555555555556,
+          "f1": 0.3978300180831827,
+          "mcc": 0.09353482024870309,
+          "auc": 0.5357116188769415,
+          "auprc": 0.5305005197302672,
+          "tp": 110,
+          "tn": 289,
+          "fp": 83,
+          "fn": 250,
+          "confusion_matrix": [
+            [
+              289,
+              83
+            ],
+            [
+              250,
+              110
+            ]
+          ],
+          "samples": 732,
+          "threshold": 0.5
+        },
+        "short": {
+          "accuracy": 0.5757575757575758,
+          "precision": 0.608433734939759,
+          "recall": 0.4950980392156863,
+          "f1": 0.545945945945946,
+          "mcc": 0.1585690725579408,
+          "auc": 0.5946435866013071,
+          "auprc": 0.5910283063747249,
+          "tp": 101,
+          "tn": 127,
+          "fp": 65,
+          "fn": 103,
+          "confusion_matrix": [
+            [
+              127,
+              65
+            ],
+            [
+              103,
+              101
+            ]
+          ],
+          "samples": 396,
+          "threshold": 0.5
+        },
+        "511-1020": {
+          "accuracy": 0.547244094488189,
+          "precision": 0.5737704918032787,
+          "recall": 0.28225806451612906,
+          "f1": 0.3783783783783784,
+          "mcc": 0.0962537001127188,
+          "auc": 0.5497828784119105,
+          "auprc": 0.5427403757585318,
+          "tp": 35,
+          "tn": 104,
+          "fp": 26,
+          "fn": 89,
+          "confusion_matrix": [
+            [
+              104,
+              26
+            ],
+            [
+              89,
+              35
+            ]
+          ],
+          "samples": 254,
+          "threshold": 0.5
+        },
+        "1021-2040": {
+          "accuracy": 0.5714285714285714,
+          "precision": 0.6176470588235294,
+          "recall": 0.375,
+          "f1": 0.4666666666666667,
+          "mcc": 0.15534712747612348,
+          "auc": 0.5613440688775511,
+          "auprc": 0.5738152493205398,
+          "tp": 42,
+          "tn": 86,
+          "fp": 26,
+          "fn": 70,
+          "confusion_matrix": [
+            [
+              86,
+              26
+            ],
+            [
+              70,
+              42
+            ]
+          ],
+          "samples": 224,
+          "threshold": 0.5
+        },
+        "2041+": {
+          "accuracy": 0.5196850393700787,
+          "precision": 0.515625,
+          "recall": 0.2661290322580645,
+          "f1": 0.351063829787234,
+          "mcc": 0.03185558262191722,
+          "auc": 0.49606079404466497,
+          "auprc": 0.49110038873507467,
+          "tp": 33,
+          "tn": 99,
+          "fp": 31,
+          "fn": 91,
+          "confusion_matrix": [
+            [
+              99,
+              31
+            ],
+            [
+              91,
+              33
+            ]
+          ],
+          "samples": 254,
+          "threshold": 0.5
+        }
+      },
+      "selection": {
+        "overall": {
+          "functions": 1128,
+          "input_tokens": 483213,
+          "source_tokens": 470197,
+          "full_budget": 717,
+          "pairs": 564,
+          "identical_inputs": 32,
+          "identical_fraction": 0.05673758865248227,
+          "syntax_analyzed": 716,
+          "syntax_errors": 248,
+          "relations": {
+            "condition": {
+              "available": 13762,
+              "context_kept": 13207,
+              "both_kept": 12929
+            },
+            "declaration": {
+              "available": 8409,
+              "context_kept": 7776,
+              "both_kept": 7609
+            },
+            "assignment": {
+              "available": 2546,
+              "context_kept": 2125,
+              "both_kept": 2082
+            },
+            "completion": {
+              "available": 619,
+              "context_kept": 401,
+              "both_kept": 401
+            },
+            "neighbor": {
+              "available": 2125,
+              "context_kept": 1445,
+              "both_kept": 1398
+            }
+          }
+        },
+        "long": {
+          "functions": 732,
+          "input_tokens": 374500,
+          "source_tokens": 362276,
+          "full_budget": 716,
+          "pairs": 374,
+          "identical_inputs": 32,
+          "identical_fraction": 0.0855614973262032,
+          "syntax_analyzed": 716,
+          "syntax_errors": 248,
+          "relations": {
+            "condition": {
+              "available": 13762,
+              "context_kept": 13207,
+              "both_kept": 12929
+            },
+            "declaration": {
+              "available": 8409,
+              "context_kept": 7776,
+              "both_kept": 7609
+            },
+            "assignment": {
+              "available": 2546,
+              "context_kept": 2125,
+              "both_kept": 2082
+            },
+            "completion": {
+              "available": 619,
+              "context_kept": 401,
+              "both_kept": 401
+            },
+            "neighbor": {
+              "available": 2125,
+              "context_kept": 1445,
+              "both_kept": 1398
+            }
+          }
+        },
+        "short": {
+          "functions": 396,
+          "input_tokens": 108713,
+          "source_tokens": 107921,
+          "full_budget": 1,
+          "pairs": 190,
+          "identical_inputs": 0,
+          "identical_fraction": 0.0,
+          "syntax_analyzed": 0,
+          "syntax_errors": 0,
+          "relations": {
+            "condition": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "declaration": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "assignment": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "completion": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            },
+            "neighbor": {
+              "available": 0,
+              "context_kept": 0,
+              "both_kept": 0
+            }
+          }
+        },
+        "511-1020": {
+          "functions": 254,
+          "input_tokens": 129764,
+          "source_tokens": 126540,
+          "full_budget": 238,
+          "pairs": 130,
+          "identical_inputs": 3,
+          "identical_fraction": 0.023076923076923078,
+          "syntax_analyzed": 238,
+          "syntax_errors": 55,
+          "relations": {
+            "condition": {
+              "available": 2112,
+              "context_kept": 2111,
+              "both_kept": 2096
+            },
+            "declaration": {
+              "available": 1706,
+              "context_kept": 1699,
+              "both_kept": 1677
+            },
+            "assignment": {
+              "available": 472,
+              "context_kept": 471,
+              "both_kept": 470
+            },
+            "completion": {
+              "available": 172,
+              "context_kept": 146,
+              "both_kept": 146
+            },
+            "neighbor": {
+              "available": 715,
+              "context_kept": 652,
+              "both_kept": 641
+            }
+          }
+        },
+        "1021-2040": {
+          "functions": 224,
+          "input_tokens": 114688,
+          "source_tokens": 110754,
+          "full_budget": 224,
+          "pairs": 114,
+          "identical_inputs": 8,
+          "identical_fraction": 0.07017543859649122,
+          "syntax_analyzed": 224,
+          "syntax_errors": 69,
+          "relations": {
+            "condition": {
+              "available": 4023,
+              "context_kept": 3946,
+              "both_kept": 3910
+            },
+            "declaration": {
+              "available": 2887,
+              "context_kept": 2772,
+              "both_kept": 2737
+            },
+            "assignment": {
+              "available": 798,
+              "context_kept": 699,
+              "both_kept": 694
+            },
+            "completion": {
+              "available": 199,
+              "context_kept": 155,
+              "both_kept": 155
+            },
+            "neighbor": {
+              "available": 726,
+              "context_kept": 509,
+              "both_kept": 494
+            }
+          }
+        },
+        "2041+": {
+          "functions": 254,
+          "input_tokens": 130048,
+          "source_tokens": 124982,
+          "full_budget": 254,
+          "pairs": 130,
+          "identical_inputs": 21,
+          "identical_fraction": 0.16153846153846155,
+          "syntax_analyzed": 254,
+          "syntax_errors": 124,
+          "relations": {
+            "condition": {
+              "available": 7627,
+              "context_kept": 7150,
+              "both_kept": 6923
+            },
+            "declaration": {
+              "available": 3816,
+              "context_kept": 3305,
+              "both_kept": 3195
+            },
+            "assignment": {
+              "available": 1276,
+              "context_kept": 955,
+              "both_kept": 918
+            },
+            "completion": {
+              "available": 248,
+              "context_kept": 100,
+              "both_kept": 100
+            },
+            "neighbor": {
+              "available": 684,
+              "context_kept": 284,
+              "both_kept": 263
+            }
+          }
+        }
+      },
+      "edit_retention": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 25585,
+            "available_bpe": 50525,
+            "fraction": 0.5063829787234042
+          },
+          "delete": {
+            "retained_bpe": 1236,
+            "available_bpe": 2782,
+            "fraction": 0.4442846872753415
+          },
+          "insert": {
+            "retained_bpe": 9071,
+            "available_bpe": 18967,
+            "fraction": 0.47825170032161124
+          },
+          "insert_gap": {
+            "retained_bpe": 5255,
+            "available_bpe": 9392,
+            "fraction": 0.5595187393526405
+          },
+          "delete_gap": {
+            "retained_bpe": 904,
+            "available_bpe": 1822,
+            "fraction": 0.4961580680570801
+          },
+          "actual_edits": {
+            "retained_bpe": 35892,
+            "available_bpe": 72274,
+            "fraction": 0.49661012258903614
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 15281,
+            "available_bpe": 40221,
+            "fraction": 0.37992590935083664
+          },
+          "delete": {
+            "retained_bpe": 835,
+            "available_bpe": 2381,
+            "fraction": 0.3506929861402772
+          },
+          "insert": {
+            "retained_bpe": 5985,
+            "available_bpe": 15881,
+            "fraction": 0.3768654366853473
+          },
+          "insert_gap": {
+            "retained_bpe": 2587,
+            "available_bpe": 6724,
+            "fraction": 0.3847412254610351
+          },
+          "delete_gap": {
+            "retained_bpe": 654,
+            "available_bpe": 1572,
+            "fraction": 0.41603053435114506
+          },
+          "actual_edits": {
+            "retained_bpe": 22101,
+            "available_bpe": 58483,
+            "fraction": 0.37790469025186807
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 10304,
+            "available_bpe": 10304,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 401,
+            "available_bpe": 401,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 3086,
+            "available_bpe": 3086,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 2668,
+            "available_bpe": 2668,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 250,
+            "available_bpe": 250,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 13791,
+            "available_bpe": 13791,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 9524,
+            "available_bpe": 13221,
+            "fraction": 0.7203691097496407
+          },
+          "delete": {
+            "retained_bpe": 544,
+            "available_bpe": 740,
+            "fraction": 0.7351351351351352
+          },
+          "insert": {
+            "retained_bpe": 3769,
+            "available_bpe": 5678,
+            "fraction": 0.6637900669249736
+          },
+          "insert_gap": {
+            "retained_bpe": 1442,
+            "available_bpe": 1924,
+            "fraction": 0.7494802494802495
+          },
+          "delete_gap": {
+            "retained_bpe": 268,
+            "available_bpe": 351,
+            "fraction": 0.7635327635327636
+          },
+          "actual_edits": {
+            "retained_bpe": 13837,
+            "available_bpe": 19639,
+            "fraction": 0.704567442334131
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 3772,
+            "available_bpe": 10368,
+            "fraction": 0.3638117283950617
+          },
+          "delete": {
+            "retained_bpe": 254,
+            "available_bpe": 898,
+            "fraction": 0.2828507795100223
+          },
+          "insert": {
+            "retained_bpe": 1524,
+            "available_bpe": 4741,
+            "fraction": 0.32145117063910567
+          },
+          "insert_gap": {
+            "retained_bpe": 829,
+            "available_bpe": 2180,
+            "fraction": 0.3802752293577982
+          },
+          "delete_gap": {
+            "retained_bpe": 283,
+            "available_bpe": 577,
+            "fraction": 0.4904679376083189
+          },
+          "actual_edits": {
+            "retained_bpe": 5550,
+            "available_bpe": 16007,
+            "fraction": 0.34672330855250827
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 1985,
+            "available_bpe": 16632,
+            "fraction": 0.11934824434824434
+          },
+          "delete": {
+            "retained_bpe": 37,
+            "available_bpe": 743,
+            "fraction": 0.04979811574697174
+          },
+          "insert": {
+            "retained_bpe": 692,
+            "available_bpe": 5462,
+            "fraction": 0.12669351885756133
+          },
+          "insert_gap": {
+            "retained_bpe": 316,
+            "available_bpe": 2620,
+            "fraction": 0.12061068702290076
+          },
+          "delete_gap": {
+            "retained_bpe": 103,
+            "available_bpe": 644,
+            "fraction": 0.15993788819875776
+          },
+          "actual_edits": {
+            "retained_bpe": 2714,
+            "available_bpe": 22837,
+            "fraction": 0.11884222971493628
+          }
+        }
+      },
+      "shared_candidate_relations": {
+        "overall": {
+          "condition": {
+            "available": 133775,
+            "both_kept": 19241
+          },
+          "declaration": {
+            "available": 58521,
+            "both_kept": 11035
+          },
+          "assignment": {
+            "available": 24938,
+            "both_kept": 3480
+          }
+        },
+        "long": {
+          "condition": {
+            "available": 133775,
+            "both_kept": 19241
+          },
+          "declaration": {
+            "available": 58521,
+            "both_kept": 11035
+          },
+          "assignment": {
+            "available": 24938,
+            "both_kept": 3480
+          }
+        },
+        "short": {
+          "condition": {
+            "available": 0,
+            "both_kept": 0
+          },
+          "declaration": {
+            "available": 0,
+            "both_kept": 0
+          },
+          "assignment": {
+            "available": 0,
+            "both_kept": 0
+          }
+        },
+        "511-1020": {
+          "condition": {
+            "available": 8001,
+            "both_kept": 5316
+          },
+          "declaration": {
+            "available": 5968,
+            "both_kept": 4206
+          },
+          "assignment": {
+            "available": 1951,
+            "both_kept": 1302
+          }
+        },
+        "1021-2040": {
+          "condition": {
+            "available": 17896,
+            "both_kept": 6136
+          },
+          "declaration": {
+            "available": 10173,
+            "both_kept": 3622
+          },
+          "assignment": {
+            "available": 3765,
+            "both_kept": 1153
+          }
+        },
+        "2041+": {
+          "condition": {
+            "available": 107878,
+            "both_kept": 7789
+          },
+          "declaration": {
+            "available": 42380,
+            "both_kept": 3207
+          },
+          "assignment": {
+            "available": 19222,
+            "both_kept": 1025
+          }
+        }
+      },
+      "preparation_seconds": {
+        "train": 147.76060024701292,
+        "valid": 16.326606306014583,
+        "test": 20.07202733302256
+      },
+      "inference_seconds": 4.7914581839577295
+    },
+    "predicted_diff": {
+      "groups": {
+        "overall": {
+          "accuracy": 0.5345744680851063,
+          "precision": 0.537864077669903,
+          "recall": 0.49113475177304966,
+          "f1": 0.5134383688600557,
+          "mcc": 0.06941139220228261,
+          "auc": 0.5542069060912429,
+          "auprc": 0.5550744286319084,
+          "tp": 277,
+          "tn": 326,
+          "fp": 238,
+          "fn": 287,
+          "confusion_matrix": [
+            [
+              326,
+              238
+            ],
+            [
+              287,
+              277
+            ]
+          ],
+          "samples": 1128,
+          "threshold": 0.5
+        },
+        "long": {
+          "accuracy": 0.523224043715847,
+          "precision": 0.519163763066202,
+          "recall": 0.41388888888888886,
+          "f1": 0.4605873261205564,
+          "mcc": 0.04395143763791387,
+          "auc": 0.5352299880525686,
+          "auprc": 0.5202543943555601,
+          "tp": 149,
+          "tn": 234,
+          "fp": 138,
+          "fn": 211,
+          "confusion_matrix": [
+            [
+              234,
+              138
+            ],
+            [
+              211,
+              149
+            ]
+          ],
+          "samples": 732,
+          "threshold": 0.5
+        },
+        "short": {
+          "accuracy": 0.5555555555555556,
+          "precision": 0.5614035087719298,
+          "recall": 0.6274509803921569,
+          "f1": 0.5925925925925926,
+          "mcc": 0.10781339637885413,
+          "auc": 0.58734170751634,
+          "auprc": 0.5980015665245629,
+          "tp": 128,
+          "tn": 92,
+          "fp": 100,
+          "fn": 76,
+          "confusion_matrix": [
+            [
+              92,
+              100
+            ],
+            [
+              76,
+              128
+            ]
+          ],
+          "samples": 396,
+          "threshold": 0.5
+        },
+        "511-1020": {
+          "accuracy": 0.5551181102362205,
+          "precision": 0.544,
+          "recall": 0.5483870967741935,
+          "f1": 0.5461847389558232,
+          "mcc": 0.10990851426908994,
+          "auc": 0.561910669975186,
+          "auprc": 0.5377265862224001,
+          "tp": 68,
+          "tn": 73,
+          "fp": 57,
+          "fn": 56,
+          "confusion_matrix": [
+            [
+              73,
+              57
+            ],
+            [
+              56,
+              68
+            ]
+          ],
+          "samples": 254,
+          "threshold": 0.5
+        },
+        "1021-2040": {
+          "accuracy": 0.5044642857142857,
+          "precision": 0.5060240963855421,
+          "recall": 0.375,
+          "f1": 0.43076923076923074,
+          "mcc": 0.009243818241476257,
+          "auc": 0.510921556122449,
+          "auprc": 0.5188035164746396,
+          "tp": 42,
+          "tn": 71,
+          "fp": 41,
+          "fn": 70,
+          "confusion_matrix": [
+            [
+              71,
+              41
+            ],
+            [
+              70,
+              42
+            ]
+          ],
+          "samples": 224,
+          "threshold": 0.5
+        },
+        "2041+": {
+          "accuracy": 0.5078740157480315,
+          "precision": 0.4936708860759494,
+          "recall": 0.31451612903225806,
+          "f1": 0.3842364532019704,
+          "mcc": 0.007368474695713984,
+          "auc": 0.5272332506203473,
+          "auprc": 0.5170978621615712,
+          "tp": 39,
+          "tn": 90,
+          "fp": 40,
+          "fn": 85,
+          "confusion_matrix": [
+            [
+              90,
+              40
+            ],
+            [
+              85,
+              39
+            ]
+          ],
+          "samples": 254,
+          "threshold": 0.5
+        }
+      },
+      "selection": {
+        "overall": {
+          "functions": 1128,
+          "input_tokens": 483213,
+          "source_tokens": 476745,
+          "full_budget": 717,
+          "pairs": 564,
+          "identical_inputs": 41,
+          "identical_fraction": 0.0726950354609929
+        },
+        "long": {
+          "functions": 732,
+          "input_tokens": 374500,
+          "source_tokens": 368824,
+          "full_budget": 716,
+          "pairs": 374,
+          "identical_inputs": 41,
+          "identical_fraction": 0.10962566844919786
+        },
+        "short": {
+          "functions": 396,
+          "input_tokens": 108713,
+          "source_tokens": 107921,
+          "full_budget": 1,
+          "pairs": 190,
+          "identical_inputs": 0,
+          "identical_fraction": 0.0
+        },
+        "511-1020": {
+          "functions": 254,
+          "input_tokens": 129764,
+          "source_tokens": 128258,
+          "full_budget": 238,
+          "pairs": 130,
+          "identical_inputs": 4,
+          "identical_fraction": 0.03076923076923077
+        },
+        "1021-2040": {
+          "functions": 224,
+          "input_tokens": 114688,
+          "source_tokens": 112768,
+          "full_budget": 224,
+          "pairs": 114,
+          "identical_inputs": 9,
+          "identical_fraction": 0.07894736842105263
+        },
+        "2041+": {
+          "functions": 254,
+          "input_tokens": 130048,
+          "source_tokens": 127798,
+          "full_budget": 254,
+          "pairs": 130,
+          "identical_inputs": 28,
+          "identical_fraction": 0.2153846153846154
+        }
+      },
+      "edit_retention": {
+        "overall": {
+          "replace": {
+            "retained_bpe": 25738,
+            "available_bpe": 50525,
+            "fraction": 0.5094111825828798
+          },
+          "delete": {
+            "retained_bpe": 1216,
+            "available_bpe": 2782,
+            "fraction": 0.4370956146657081
+          },
+          "insert": {
+            "retained_bpe": 9381,
+            "available_bpe": 18967,
+            "fraction": 0.4945958770496125
+          },
+          "insert_gap": {
+            "retained_bpe": 5205,
+            "available_bpe": 9392,
+            "fraction": 0.554195059625213
+          },
+          "delete_gap": {
+            "retained_bpe": 817,
+            "available_bpe": 1822,
+            "fraction": 0.44840834248079037
+          },
+          "actual_edits": {
+            "retained_bpe": 36335,
+            "available_bpe": 72274,
+            "fraction": 0.502739574397432
+          }
+        },
+        "long": {
+          "replace": {
+            "retained_bpe": 15434,
+            "available_bpe": 40221,
+            "fraction": 0.383729892344795
+          },
+          "delete": {
+            "retained_bpe": 815,
+            "available_bpe": 2381,
+            "fraction": 0.34229315413691724
+          },
+          "insert": {
+            "retained_bpe": 6295,
+            "available_bpe": 15881,
+            "fraction": 0.3963856180341288
+          },
+          "insert_gap": {
+            "retained_bpe": 2537,
+            "available_bpe": 6724,
+            "fraction": 0.3773051754907793
+          },
+          "delete_gap": {
+            "retained_bpe": 567,
+            "available_bpe": 1572,
+            "fraction": 0.3606870229007634
+          },
+          "actual_edits": {
+            "retained_bpe": 22544,
+            "available_bpe": 58483,
+            "fraction": 0.38547954106321497
+          }
+        },
+        "short": {
+          "replace": {
+            "retained_bpe": 10304,
+            "available_bpe": 10304,
+            "fraction": 1.0
+          },
+          "delete": {
+            "retained_bpe": 401,
+            "available_bpe": 401,
+            "fraction": 1.0
+          },
+          "insert": {
+            "retained_bpe": 3086,
+            "available_bpe": 3086,
+            "fraction": 1.0
+          },
+          "insert_gap": {
+            "retained_bpe": 2668,
+            "available_bpe": 2668,
+            "fraction": 1.0
+          },
+          "delete_gap": {
+            "retained_bpe": 250,
+            "available_bpe": 250,
+            "fraction": 1.0
+          },
+          "actual_edits": {
+            "retained_bpe": 13791,
+            "available_bpe": 13791,
+            "fraction": 1.0
+          }
+        },
+        "511-1020": {
+          "replace": {
+            "retained_bpe": 9399,
+            "available_bpe": 13221,
+            "fraction": 0.7109144542772862
+          },
+          "delete": {
+            "retained_bpe": 495,
+            "available_bpe": 740,
+            "fraction": 0.668918918918919
+          },
+          "insert": {
+            "retained_bpe": 3772,
+            "available_bpe": 5678,
+            "fraction": 0.6643184219795703
+          },
+          "insert_gap": {
+            "retained_bpe": 1384,
+            "available_bpe": 1924,
+            "fraction": 0.7193347193347194
+          },
+          "delete_gap": {
+            "retained_bpe": 248,
+            "available_bpe": 351,
+            "fraction": 0.7065527065527065
+          },
+          "actual_edits": {
+            "retained_bpe": 13666,
+            "available_bpe": 19639,
+            "fraction": 0.695860278018229
+          }
+        },
+        "1021-2040": {
+          "replace": {
+            "retained_bpe": 3820,
+            "available_bpe": 10368,
+            "fraction": 0.36844135802469136
+          },
+          "delete": {
+            "retained_bpe": 251,
+            "available_bpe": 898,
+            "fraction": 0.2795100222717149
+          },
+          "insert": {
+            "retained_bpe": 1618,
+            "available_bpe": 4741,
+            "fraction": 0.34127821134781694
+          },
+          "insert_gap": {
+            "retained_bpe": 796,
+            "available_bpe": 2180,
+            "fraction": 0.3651376146788991
+          },
+          "delete_gap": {
+            "retained_bpe": 232,
+            "available_bpe": 577,
+            "fraction": 0.4020797227036395
+          },
+          "actual_edits": {
+            "retained_bpe": 5689,
+            "available_bpe": 16007,
+            "fraction": 0.3554070094333729
+          }
+        },
+        "2041+": {
+          "replace": {
+            "retained_bpe": 2215,
+            "available_bpe": 16632,
+            "fraction": 0.13317700817700817
+          },
+          "delete": {
+            "retained_bpe": 69,
+            "available_bpe": 743,
+            "fraction": 0.09286675639300135
+          },
+          "insert": {
+            "retained_bpe": 905,
+            "available_bpe": 5462,
+            "fraction": 0.16569022336140607
+          },
+          "insert_gap": {
+            "retained_bpe": 357,
+            "available_bpe": 2620,
+            "fraction": 0.13625954198473283
+          },
+          "delete_gap": {
+            "retained_bpe": 87,
+            "available_bpe": 644,
+            "fraction": 0.13509316770186336
+          },
+          "actual_edits": {
+            "retained_bpe": 3189,
+            "available_bpe": 22837,
+            "fraction": 0.13964180934448484
+          }
+        }
+      },
+      "shared_candidate_relations": {
+        "overall": {
+          "condition": {
+            "available": 133775,
+            "both_kept": 10391
+          },
+          "declaration": {
+            "available": 58521,
+            "both_kept": 4882
+          },
+          "assignment": {
+            "available": 24938,
+            "both_kept": 2132
+          }
+        },
+        "long": {
+          "condition": {
+            "available": 133775,
+            "both_kept": 10391
+          },
+          "declaration": {
+            "available": 58521,
+            "both_kept": 4882
+          },
+          "assignment": {
+            "available": 24938,
+            "both_kept": 2132
+          }
+        },
+        "short": {
+          "condition": {
+            "available": 0,
+            "both_kept": 0
+          },
+          "declaration": {
+            "available": 0,
+            "both_kept": 0
+          },
+          "assignment": {
+            "available": 0,
+            "both_kept": 0
+          }
+        },
+        "511-1020": {
+          "condition": {
+            "available": 8001,
+            "both_kept": 4279
+          },
+          "declaration": {
+            "available": 5968,
+            "both_kept": 2970
+          },
+          "assignment": {
+            "available": 1951,
+            "both_kept": 1035
+          }
+        },
+        "1021-2040": {
+          "condition": {
+            "available": 17896,
+            "both_kept": 3390
+          },
+          "declaration": {
+            "available": 10173,
+            "both_kept": 1533
+          },
+          "assignment": {
+            "available": 3765,
+            "both_kept": 677
+          }
+        },
+        "2041+": {
+          "condition": {
+            "available": 107878,
+            "both_kept": 2722
+          },
+          "declaration": {
+            "available": 42380,
+            "both_kept": 379
+          },
+          "assignment": {
+            "available": 19222,
+            "both_kept": 420
+          }
+        }
+      },
+      "preparation_seconds": null,
+      "inference_seconds": 4.794148904038593
+    }
+  }
+}

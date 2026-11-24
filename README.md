@@ -1,6 +1,6 @@
 # LongVul
 
-PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。采用种子 42、验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
+PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
 ## LongVul 1024
 
@@ -83,6 +83,115 @@ LongVul 的整体 MCC 和两项 AUC 高于两个单函数基线。其 F1 低于�
 
 ```bash
 "$PYTHON" longvul.py audit-fill
+"$PYTHON" -m unittest discover -s tests -v
+```
+
+## 512 位置语法区域选择与源码压缩
+
+两个实验独立使用 PrimeVul_original 原始划分和历史 Uniform Sampling 的四区居中填充。分类器均使用 UniXcoder-base-nine 的一次 FP32 Eager 前向、独立函数 BCE、16 轮、batch 8、学习率 2e-5、LOSVERAdamW 和 10% 线性预热。以完整 Valid 的 MCC 选模，并列取最早轮。正类阈值固定为 `p > 0.5`。长度分层和修改保留率按未经压缩的 UniXcoder BPE 统计。[历史实验版本](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)
+
+### 修复引导的语法区域
+
+保留历史缩进压缩及四个最多 88 BPE 的基础窗口。对需要选段的函数，以有效语句为中心，用已有 Tree-sitter 关系关联包围条件头、候选声明及较早赋值。合并重叠区间。候选须能与基础窗口一起放入预算，合并后新增的源码 BPE 和 SEP 都计入实际开销。
+
+训练标签为候选在基础窗口之外新增的修复相关 BPE 除以实际新增位置数，重叠 BPE 只计一次，分数限制在 0 到 1。训练沿用纯插入及删除空侧的邻行弱标签，评价分别报告实际修改和空侧邻行的保留率。定位器沿用冻结的 UniXcoder 词嵌入和四个顺序池的小型卷积头，以非零软标签计算 Valid AP 选模。每函数最多选 1、2 或 4 个候选，以 Valid 长函数打包后的实际修改 BPE 保留率确定上限。
+
+Random Region 用固定种子打乱候选排序，Predicted Region 用定位器排序，Region Oracle 用各划分的真实差异计算软标签、按正分候选排序。三组使用同一候选数上限、原始源码顺序和剩余预算填充。Region Oracle 在 Test 使用配对版本，属于特权信息对照。Random Region 和 Predicted Region 的 Test 输入在计算 Test 差异之前固定。候选并集统计所有单独能与基础窗口一起放入预算的区域，衡量候选库的覆盖范围。共保留率要求同一候选关系的语句和关联上下文都完整可见，历史对照也使用相同的关系分母。
+
+Valid 选出每函数最多 4 个区域，轻量定位器取第 1 轮，Valid 和 Test AP 分别为 0.0997 和 0.0965。Test 长函数中，四个基础窗口保留了 26.21% 的实际修改 BPE。58,841 个可选区域的并集覆盖 72.41%，这项统计未施加联合打包约束。实际打包后的保留率和共保留率如下。
+
+| 方法 | Test 长组修改 BPE 保留率 | 长组关联共保留率 | 完全相同的配对输入 |
+| --- | ---: | ---: | ---: |
+| Uniform Sampling | 40.36% | 7.60% | 20/564 |
+| Context-Aware | 37.79% | 15.54% | 32/564 |
+| Predicted-Diff | 38.55% | 8.01% | 41/564 |
+| Random Region | 39.70% | 13.90% | 0/564 |
+| Region Oracle（特权信息） | 60.50% | 10.98% | 1/564 |
+| Predicted Region | 38.74% | 11.49% | 23/564 |
+
+长组共保留率的分母为 217,234 条可选关系。Random Region 对配对两侧的记录独立排序，因此碰撞减少也可能来自保留了不同的未修改源码。纯插入与删除空侧邻域的分组保留率、三类关系的分项计数和预处理耗时见 [语法区域输入统计](results/syntax_regions_512/seed42/inputs.json)。
+
+#### 语法区域 Test 分类，种子 42
+
+| 方法 | 整体 MCC | F1 | ROC-AUC | PR-AUC | >510 MCC | F1 | ROC-AUC | PR-AUC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Uniform Sampling | 0.0880 | 0.5043 | 0.5599 | 0.5644 | 0.0465 | 0.4441 | 0.5313 | 0.5260 |
+| Context-Aware | 0.1199 | 0.4572 | 0.5591 | 0.5575 | 0.0935 | 0.3978 | 0.5357 | 0.5305 |
+| Predicted-Diff | 0.0694 | 0.5134 | 0.5542 | 0.5551 | 0.0440 | 0.4606 | 0.5352 | 0.5203 |
+| Random Region | 0.0758 | 0.5936 | 0.5477 | 0.5544 | 0.0295 | 0.5620 | 0.5103 | 0.5031 |
+| Region Oracle（特权信息） | 0.1526 | 0.5670 | 0.6124 | 0.6020 | 0.1769 | 0.5606 | 0.6301 | 0.6137 |
+| Predicted Region | 0.0150 | 0.6343 | 0.5240 | 0.5299 | 0.0044 | 0.6043 | 0.5088 | 0.5050 |
+
+Predicted Region 取第 1 轮，16 轮中有 15 轮在 Valid 只预测一个类别，最后三轮平均训练 BCE 为 0.6938。选中模型将 85.3% 的 Test 函数预测为正类，此时 F1 受正类预测比例影响。三组的分类优化各耗时 35.56–35.61 分钟，Test 分类耗时 4.74–4.77 秒，训练和推理显存峰值分别为 6.42–6.44 GiB 和 0.85–0.87 GiB。轻量定位器训练耗时 126.49 秒。Test 的分词和缩进简化用 8.40 秒，语法和候选生成用 20.98 秒，轻量特征准备、打分和 Predicted Region 打包共用 3.03 秒。[各长度组结果](results/syntax_regions_512/seed42/summary.json)
+
+#### 语法区域种子复核
+
+| 方法 | 整体 MCC，42 / 1234 | 长组 MCC，42 / 1234 | ≥2041 MCC，42 / 1234 |
+| --- | ---: | ---: | ---: |
+| Random Region | 0.0758 / 0.0905 | 0.0295 / 0.0554 | −0.0503 / 0.0363 |
+| Region Oracle（特权信息） | 0.1526 / 0.1465 | 0.1769 / 0.1743 | 0.1720 / 0.1480 |
+| Predicted Region | 0.0150 / 0.0603 | 0.0044 / 0.0706 | −0.0498 / 0.0217 |
+
+补充试验固定种子 42 的区域输入，复用定位器和选择策略，只更换分类训练种子。Region Oracle 的长组 MCC 两次均明显高于 Random Region。Predicted Region 在种子 1234 的最后三轮平均 BCE 降至 0.3634，长组 MCC 高于同种子的 Random Region，整体 MCC 则两次均较低。真实修改 BPE 保留率未超过历史 Uniform Sampling。结果没有显示可重复的检测增益。[种子 1234 各长度组结果](results/syntax_regions_512/seed1234/summary.json)
+
+#### 多窗口定位对照
+
+将历史缩进压缩后的完整函数沿行单元边界编码为不重叠窗口。用冻结 UniXcoder 在 BF16 SDPA 下的末层隐藏状态替换词嵌入，仍对每个候选的相同四个顺序池取均值，复用软标签和定位头。Valid AP 由 0.0997 升至 0.1325，Test AP 为 0.0951，轻量定位器为 0.0965。Valid 选中最多 2 个候选，Valid 和 Test 长组实际修改保留率为 39.11% 和 40.93%。相比历史 Uniform Sampling 分别增加约 0.59、0.57 个百分点。该对照止于定位评价。
+
+| 划分 | 编码窗口 | 批量前向 | 计入 padding 的位置 | 编码与汇聚耗时 | GPU 分配峰值 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Train | 33,145 | 1,382 | 16,959,636 | 66.78 s | 0.527 GiB |
+| Valid | 3,719 | 155 | 1,902,523 | 6.99 s | 0.523 GiB |
+| Test | 4,432 | 185 | 2,267,720 | 8.66 s | 0.532 GiB |
+
+以上时间包含批量组装、编码、汇聚及特征回传。加载编码器用 1.34 秒，定位头训练用 103.93 秒，Test 定位打分用 0.39 秒。Train 的半精度汇聚特征占 2.67 GiB 主存。分词、语法候选、打包及 Recall@K 的统计单列于 [多窗口定位结果](results/syntax_regions_512/contextual/seed42/inputs.json)。
+
+### 源码压缩对照
+
+四组都用历史 Uniform Sampling 的区域划分、居中填充和 SEP 打包。Original 使用未压缩分词，Simple 复用历史缩进压缩及种子 42 分类结果。Lexical 清理可靠识别的注释、冗余水平空白和空行，保护字面量和预处理行，并对换行续接及行列敏感源码保留原文。AST-aware 只在可可靠解析的函数体或直接嵌套的普通复合块内删除独立空语句 `;`。保留控制体和标签后的空语句，变换后重新解析检查。原始文件未提供的宏定义和编译配置可能影响解析。逐样本结果记录实际删除的空语句原字符偏移。[C++ 翻译阶段](https://eel.is/c++draft/lex.phases) · [C++ 空语句](https://eel.is/c++draft/stmt.expr) · [GCC 预处理步骤](https://gcc.gnu.org/onlinedocs/cpp/Initial-processing.html)
+
+被保留的压缩 token 通过字符位置映射回原始源码。只要一个原始 BPE 的字符范围有缺失，就不计入保留率分子。压缩率按分词总数的减少比例计算，完整输入率是压缩后正文不超过 510 BPE 的函数占比。
+
+| 方法 | Test BPE 减少 | 完整输入 | 实际修改 BPE 保留率 | 长组实际修改 BPE 保留率 | 完全相同的配对输入 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 0.00% | 396/1,128 | 51.49% | 40.05% | 28/564 |
+| Simple | 5.84% | 412/1,128 | 51.74% | 40.36% | 20/564 |
+| Lexical | 16.48% | 458/1,128 | 45.16% | 37.07% | 24/564 |
+| AST-aware | 16.48% | 458/1,128 | 45.16% | 37.07% | 24/564 |
+
+Lexical 能完整编码更多函数，按行级 diff 统计的修改 BPE 保留率却下降。Test 长组的 58,483 个实际修改 BPE 中，有 11,047 个在选段前已失去完整字符覆盖。修改行包含被清理的空白和注释，保留率仍使用同一个原始 BPE 分母。AST-aware 在 Train、Valid、Test 分别删除 72、0、1 条独立空语句，改变 17、0、1 个打包输入。三个划分的分词总数与 Lexical 相同。[源码压缩输入统计](results/compression_512/seed42/inputs.json)
+
+#### 压缩策略 Test 分类，种子 42
+
+| 方法 | 整体 MCC | F1 | ROC-AUC | PR-AUC | >510 MCC | F1 | ROC-AUC | PR-AUC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Original | 0.0951 | 0.4617 | 0.5592 | 0.5636 | 0.0465 | 0.3979 | 0.5263 | 0.5244 |
+| Simple | 0.0880 | 0.5043 | 0.5599 | 0.5644 | 0.0465 | 0.4441 | 0.5313 | 0.5260 |
+| Lexical | 0.0548 | 0.2596 | 0.5449 | 0.5451 | 0.0400 | 0.1575 | 0.5334 | 0.5180 |
+| AST-aware | 0.0393 | 0.5476 | 0.5452 | 0.5501 | 0.0350 | 0.5049 | 0.5383 | 0.5311 |
+
+新训练组优化耗时 35.86–35.93 分钟，Test 分类耗时 4.80–4.88 秒。训练和推理显存峰值分别为 6.42–6.45 GiB 和 0.85–0.87 GiB。Test 依次执行各输入处理步骤时，原始分词及缩进映射共用 9.75 秒。Original 和 Simple 打包分别用 7.59 和 1.24 秒。Lexical 解析变换用 13.39 秒，重新分词与打包用 12.48 秒。AST-aware 共用 Lexical 变换，独立空语句处理用 0.003 秒，重新分词与打包用 12.47 秒。[各长度组结果](results/compression_512/seed42/summary.json)
+
+#### 压缩策略种子复核
+
+| 方法 | 整体 MCC，42 / 1234 | 长组 MCC，42 / 1234 | ≥2041 MCC，42 / 1234 | 末三轮平均 BCE，42 / 1234 |
+| --- | ---: | ---: | ---: | ---: |
+| Simple | 0.0880 / 0.0708 | 0.0465 / 0.0554 | −0.0376 / −0.0249 | 0.2795 / 0.3060 |
+| Lexical | 0.0548 / 0.0724 | 0.0400 / 0.0625 | −0.0288 / 0.0575 | 0.4264 / 0.6920 |
+| AST-aware | 0.0393 / 0.0687 | 0.0350 / 0.0464 | −0.0473 / 0.0094 | 0.6550 / 0.4078 |
+
+Lexical 的整体和长组 MCC 相对 Simple 的变化在两个种子间反向，整体和长组 F1 两次均低于 Simple。Lexical 在种子 1234 有 9 轮 Valid 只预测一个类别，最后三轮 BCE 接近 0.693。AST-aware 两次的整体和长组 MCC 均低于 Lexical。它只改变了少量输入，训练轨迹差异也随种子变化。实验支持 Lexical 的覆盖收益，尚未显示可重复的检测收益。[种子 1234 各长度组结果](results/compression_512/seed1234/summary.json)
+
+实验使用 Tree-sitter 0.25.2、tree-sitter-cpp 0.23.4 和 Tokenizers 0.22.2。在 GPU-SERVER-3 上，两组各使用一张 RTX 4090。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" syntax_region_study.py --seed 42
+"$PYTHON" compression_study.py --seed 42
+"$PYTHON" syntax_region_study.py --seed 42 --contextual-locator-only
+"$PYTHON" syntax_region_study.py --seed 1234
+"$PYTHON" compression_study.py --seed 1234 --methods simple lexical ast_aware
 "$PYTHON" -m unittest discover -s tests -v
 ```
 

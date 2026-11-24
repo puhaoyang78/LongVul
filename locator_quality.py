@@ -52,6 +52,21 @@ def load_context_encoder():
         attn_implementation="sdpa", dtype=torch.bfloat16).cuda().eval()
 
 
+@torch.inference_mode()
+def context_encoder_batches(model, tokenizer, windows):
+    """Encode each source window once and expose local prefix sums for span pooling."""
+    while batch := list(islice(windows, CONTEXT_BATCH)):
+        width = max(hi-lo+2 for _,lo,hi,_ in batch)
+        ids = torch.full((len(batch), width), tokenizer.pad_token_id, dtype=torch.long)
+        mask = torch.zeros_like(ids, dtype=torch.bool)
+        for i, (source, lo, hi, _) in enumerate(batch):
+            values = [tokenizer.cls_token_id, *source.ids[lo:hi].tolist(), tokenizer.sep_token_id]
+            ids[i, :len(values)] = torch.tensor(values)
+            mask[i, :len(values)] = True
+        hidden = model(input_ids=ids.cuda(), attention_mask=mask.cuda()).last_hidden_state
+        yield batch, F.pad(hidden.float().cumsum(1), (0,0,1,0)), ids.numel()
+
+
 def contextual_vectors(model, sources, tokenizer, split):
     regions = sum(len(s.regions) for s in sources)
     features = torch.empty((regions, PARTS, model.config.hidden_size), dtype=torch.float16)
@@ -61,21 +76,13 @@ def contextual_vectors(model, sources, tokenizer, split):
     torch.cuda.reset_peak_memory_stats()
     started = perf_counter()
     with torch.inference_mode():
-        while batch := list(islice(windows, CONTEXT_BATCH)):
-            width = max(hi-lo+2 for _,lo,hi,_ in batch)
-            ids = torch.full((len(batch), width), tokenizer.pad_token_id, dtype=torch.long)
-            mask = torch.zeros_like(ids, dtype=torch.bool)
+        for batch, cumulative, positions in context_encoder_batches(model, tokenizer, windows):
             indices, breaks = [], []
             for i, (s, lo, hi, units) in enumerate(batch):
-                values = [tokenizer.cls_token_id, *s.ids[lo:hi].tolist(), tokenizer.sep_token_id]
-                ids[i, :len(values)] = torch.tensor(values)
-                mask[i, :len(values)] = True
                 for r in units:
                     indices.append(i)
                     breaks.append([1+r.start-lo+(r.end-r.start)*k//PARTS for k in range(PARTS+1)])
                 body += hi-lo
-            hidden = model(input_ids=ids.cuda(), attention_mask=mask.cuda()).last_hidden_state
-            cumulative = F.pad(hidden.float().cumsum(1), (0,0,1,0))
             cuts = torch.tensor(breaks, device="cuda")
             batch_idx = torch.tensor(indices, device="cuda")[:, None]
             pooled = (cumulative[batch_idx, cuts[:, 1:]]-cumulative[batch_idx, cuts[:, :-1]])
@@ -84,7 +91,7 @@ def contextual_vectors(model, sources, tokenizer, split):
             cursor += len(indices)
             calls += 1
             sequences += len(batch)
-            slots += ids.numel()
+            slots += positions
             if calls % 500 == 0:
                 print("contextual", split, cursor, "/", regions, "regions", flush=True)
     if cursor != regions or body != sum(len(s.ids) for s in sources):

@@ -431,6 +431,38 @@ def classifier_config(method):
                 python=platform.python_version())
 
 
+def fit_512_inputs(tokenizer, datasets, root, weights, *, method, seed, configuration, fields=()):
+    """Fit a historical Eager classifier for a supplied set of fixed layouts."""
+    from predicted_diff import evaluate, fp32_classifier
+
+    config = classifier_config("uniform_sampling")
+    model_id, revision = BACKBONES["unixcoder"]
+    config.update(method=method, seed=seed, model_id=model_id, model_revision=revision,
+                  split_functions={split: len(data) for split,data in datasets.items()}, **configuration)
+    if (root / "metrics.json").is_file():
+        result = json.loads((root / "metrics.json").read_text())
+        if result["config"] != config:
+            raise ValueError(f"Mismatched experiment configuration in {root}")
+        return result
+    set_seed(seed)
+    model = fp32_classifier(tokenizer)
+    best, history = fit_classifier(model, datasets["train"], datasets["valid"], weights, root, config)
+    splits = {split: evaluate(model, datasets[split], split, root=root, fields=fields) for split in ("valid", "test")}
+    if splits["valid"]["groups"]["overall"] != best["validation"]:
+        raise ValueError(f"{method}: reloaded classifier did not reproduce Valid")
+    tail = sum(e["train_loss"] for e in history[-3:])/3
+    result = dict(config=config, selected_epoch=best["epoch"], split=splits,
+                  training_seconds=sum(e["training_seconds"] for e in history),
+                  peak_train_allocated_bytes=max(e["peak_allocated_bytes"] for e in history),
+                  convergence=dict(last_three_mean_train_bce=tail, near_chance=tail >= .68,
+                                   one_class_valid_epochs=sum(e["validation"]["tp"]+e["validation"]["fp"] in
+                                     (0, len(datasets["valid"])) for e in history)))
+    write_json(root / "metrics.json", result)
+    print(root.parent.name, method, "complete", "epoch", best["epoch"], "Test MCC", splits["test"]["groups"]["overall"]["mcc"],
+          "tail BCE", round(tail, 4), flush=True)
+    return result
+
+
 def run(method, tokenizer):
     if method == ORACLE_NOISE:
         from oracle_noise import run_oracle_noise

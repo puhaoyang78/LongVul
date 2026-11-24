@@ -122,15 +122,18 @@ def region_metrics(predictions, labels, *, ks=(1, 5, 10)):
     return result
 
 
-def train_localizer(sources, targets, weights, results, *, vectors=None, feature_config=None):
+def train_localizer(sources, targets, weights, results, *, vectors=None, feature_config=None, soft_targets=False):
     """Train/Valid weak labels are supplied explicitly; scores require only source."""
     weights.mkdir(parents=True, exist_ok=True)
     started = perf_counter()
     train, valid = (Regions(sources[split], targets[split], vectors=vectors[split] if vectors is not None else None)
                     for split in ("train", "valid"))
-    positive = int(train.truth.sum())
+    positive = float(train.truth.sum(dtype=np.float64)) if soft_targets else int(train.truth.sum())
     if not 0 < positive < len(train):
         raise ValueError("Repair localizer requires positive and negative training regions")
+    if soft_targets and any(not np.isfinite(data.truth).all() or not ((0 <= data.truth) & (data.truth <= 1)).all()
+                            for data in (train, valid)):
+        raise ValueError("Repair-related soft targets must be finite and within [0, 1]")
     ratio = (len(train)-positive)/positive
     config = dict(seed=SEED, batch=BATCH, epochs=EPOCHS, lr=LR, parts=PARTS, channels=CHANNELS,
                   source_model=str(UNIX_BASE), frozen_input_embeddings=True, pos_weight=ratio,
@@ -138,6 +141,8 @@ def train_localizer(sources, targets, weights, results, *, vectors=None, feature
                   selection="full validation region average precision, earliest tie")
     if feature_config is not None:
         config.update(feature_config)
+    if soft_targets:
+        config.update(soft_targets=True, selection="full Valid AP on nonzero soft targets, earliest tie")
     write_json(results / "config.json", config)
     set_seed(SEED)
     model = (Localizer() if vectors is None else RegionHead(train.vectors.shape[-1])).cuda()
@@ -163,7 +168,7 @@ def train_localizer(sources, targets, weights, results, *, vectors=None, feature
         loss = float(torch.stack(losses).mean())
         train_seconds, peak = perf_counter()-before, torch.cuda.max_memory_allocated()
         p, valid_seconds = score_regions(model, valid)
-        ap = float(average_precision_score(valid.truth, p))
+        ap = float(average_precision_score(valid.truth > 0 if soft_targets else valid.truth, p))
         if ap > best:
             best = ap
             tmp = weights / "best.tmp"
@@ -183,5 +188,6 @@ def train_localizer(sources, targets, weights, results, *, vectors=None, feature
     for split, data in (("train", train), ("valid", valid)):
         p, seconds = score_regions(model, data)
         predictions[split] = data.regroup(p)
-        state["splits"][split] = dict(region_metrics(predictions[split], targets[split]), inference_seconds=seconds)
+        truth = [scores > 0 for scores in targets[split]] if soft_targets else targets[split]
+        state["splits"][split] = dict(region_metrics(predictions[split], truth), inference_seconds=seconds)
     return model, predictions, state

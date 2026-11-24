@@ -176,7 +176,7 @@ def control_header(node):
 
 
 def related_statements(code, offsets, keep, base, parser):
-    """Find syntax links from retained regions of this function alone."""
+    """Find syntax links from retained regions, or from all statements when base is None."""
     source = code.encode("utf-8")
     root = parser.parse(source).root_node
     if len(source) == len(code):
@@ -188,7 +188,7 @@ def related_statements(code, offsets, keep, base, parser):
     def bpe(start, end):
         return bisect_right(ends, start), bisect_left(starts, end)
 
-    base_bytes = [(starts[start], ends[end-1]) for start, end in base]
+    base_bytes = [(starts[start], ends[end-1]) for start, end in base] if base is not None else None
     scopes = [(None, None)]
     definitions, anchors, named_sites = defaultdict(list), [], set()
     stack = [(root, 0, None)]
@@ -203,14 +203,14 @@ def related_statements(code, offsets, keep, base, parser):
             anchor = None
             if header:
                 span = bpe(*header[0])
-                if intersects(span, base):
+                if base is not None and intersects(span, base):
                     anchor = (span, scope, None, {})
                     anchors.append(anchor)
         if kind in STATEMENT:
             anchor = None
             if not node.has_error:
                 span = bpe(node.start_byte, node.end_byte)
-                if span[0] < span[1] and intersects(span, base):
+                if span[0] < span[1] and (base is None or intersects(span, base)):
                     anchor = (span, scope, node, {})
                     anchors.append(anchor)
                 if kind == "declaration":
@@ -224,22 +224,22 @@ def related_statements(code, offsets, keep, base, parser):
                     if lhs is not None and lhs.type == "identifier":
                         definitions[scope, lhs.text, "assignment"].append(span)
         if kind == "identifier" and anchor is not None and node.start_byte not in named_sites:
-            if intersects((node.start_byte, node.end_byte), base_bytes):
+            if base_bytes is None or intersects((node.start_byte, node.end_byte), base_bytes):
                 span = bpe(node.start_byte, node.end_byte)
-                if contains(span, base) and contains(span, [anchor[0]]):
+                if (base is None or contains(span, base)) and contains(span, [anchor[0]]):
                     anchor[3].setdefault(node.text, span[0])
         stack.extend((child, scope, anchor) for child in reversed(node.named_children))
 
     links = set()
     for anchor, scope, stmt, names in anchors:
-        if not contains(anchor, base):
+        if base is not None and not contains(anchor, base):
             links.add(("completion", anchor, anchor))
         cursor = scope
         while cursor is not None:
             cursor, header = scopes[cursor]
             if header and contains(anchor, [bpe(*header[1])]):
                 links.add(("condition", anchor, bpe(*header[0])))
-        if stmt is not None:
+        if base is not None and stmt is not None:
             for attr in ("prev_named_sibling", "next_named_sibling"):
                 neighbor = getattr(stmt, attr)
                 while neighbor is not None and neighbor.type == "comment":
@@ -265,7 +265,8 @@ def related_statements(code, offsets, keep, base, parser):
             if assignment is not None:
                 links.add(("assignment", anchor, assignment))
 
-    return {link for link in links if link[2][0] < link[2][1] and not contains(link[2], base)}, root.has_error
+    return {link for link in links if link[2][0] < link[2][1] and
+            (base is None or not contains(link[2], base))}, root.has_error
 
 
 def prefer_context(base, links, *, budget=BUDGET):
@@ -289,14 +290,29 @@ def input_layout(code, ids, offsets):
     return line_layout(code, ids, offsets) if len(ids) > BUDGET else (list(range(len(ids))), [0, len(ids)])
 
 
+def base_windows(boundaries):
+    windows, limits = choose_candidates(boundaries, alternatives=False, quotas=BASE_QUOTAS)
+    return [choices[0] for choices in windows], limits
+
+
+def link_retention(links, spans):
+    linked = {kind: [0, 0, 0] for kind in RELATED_WEIGHTS}
+    retained = merge(spans)
+    for kind, anchor, context in links:
+        context_kept = contains(context, retained)
+        linked[kind][0] += 1
+        linked[kind][1] += int(context_kept)
+        linked[kind][2] += int(context_kept and contains(anchor, retained))
+    return linked
+
+
 def prepare(code, ids, offsets, tokenizer, *, method, parser=None, analyze=False):
     keep, boundaries = input_layout(code, ids, offsets)
     links, parse_error = set(), None
     if len(keep) <= BUDGET:
         base = spans = [(0, len(keep))]
     else:
-        windows, limits = choose_candidates(boundaries, alternatives=False, quotas=BASE_QUOTAS)
-        base = [choices[0] for choices in windows]
+        base, limits = base_windows(boundaries)
         if analyze or method == "context_aware":
             links, parse_error = related_statements(code, offsets, keep, base, parser)
         if method == "uniform4":
@@ -311,14 +327,7 @@ def prepare(code, ids, offsets, tokenizer, *, method, parser=None, analyze=False
             uniform[i] = torch.tensor((start, end, keep[start], keep[end-1]+1))
     example = fixed_example(ids, keep, spans, tokenizer, uniform, exact=method != "uniform4")
     if analyze:
-        linked = {kind: [0, 0, 0] for kind in RELATED_WEIGHTS}
-        retained = merge(spans)
-        for kind, anchor, context in links:
-            context_kept = contains(context, retained)
-            linked[kind][0] += 1
-            linked[kind][1] += int(context_kept)
-            linked[kind][2] += int(context_kept and contains(anchor, retained))
-        example.update(links=linked, parse_error=parse_error)
+        example.update(links=link_retention(links, spans), parse_error=parse_error)
     return example
 
 
@@ -329,16 +338,25 @@ def fixed_example(ids, keep, spans, tokenizer, uniform, *, exact=True):
     return dict(fixed=fixed, length=length, raw=len(ids), uniform=uniform, bank=None, compacted_bpe=len(keep))
 
 
+def visible_source(example):
+    if "original_runs" in example:
+        return example["original_runs"]
+    positions = example["fixed"][1, :example["length"]].tolist()
+    return merge([(i, i+1) for i in positions if i >= 0])
+
+
 def describe(data, scores, path, *, paired, include=()):
     rows, inputs = [], []
+    if scores is None:
+        scores = [None]*len(data)
     for row, ex, score in zip(data.metadata, data.examples, scores, strict=True):
-        positions = [i for i in ex["fixed"][1, :ex["length"]].tolist() if i >= 0]
         # Exact source runs include the holes left by removed indentation.
-        runs = merge([(i, i+1) for i in positions])
+        runs = visible_source(ex)
         inputs.append(ex["fixed"][0, :ex["length"]].tolist())
         base = ex["uniform"].tolist()
-        rows.append(dict(**row, probability=score, prediction=int(score > .5), input_length=ex["length"],
-                         source_bpe=len(positions), source_runs=runs, base_windows=[part for part in base if part[0] >= 0],
+        classify = {} if score is None else dict(probability=score, prediction=int(score > .5))
+        rows.append(dict(**row, **classify, input_length=ex["length"],
+                         source_bpe=sum(b-a for a,b in runs), source_runs=runs, base_windows=[part for part in base if part[0] >= 0],
                          compacted_bpe=ex["compacted_bpe"]))
         if paired and "links" in ex:
             rows[-1].update(parse_error=ex["parse_error"], links=ex["links"])
@@ -349,13 +367,14 @@ def describe(data, scores, path, *, paired, include=()):
              zip(rows[::2], rows[1::2], inputs[::2], inputs[1::2], strict=True)] if paired else []
     for i, same in enumerate(same for _, same in pairs):
         rows[2*i]["identical_pair_input"] = rows[2*i+1]["identical_pair_input"] = same
-    temporary = path.with_suffix(".tmp")
-    with gzip.open(temporary, "wt", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in row.items()})
-    temporary.replace(path)
+    if path is not None:
+        temporary = path.with_suffix(".tmp")
+        with gzip.open(temporary, "wt", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in row.items()})
+        temporary.replace(path)
 
     summary = {}
     for name, (lo, hi) in GROUPS.items():
