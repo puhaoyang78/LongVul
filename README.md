@@ -217,6 +217,64 @@ Predicted-Diff 的整体 MCC 比 Oracle-Diff 低 0.1417，长组低 0.2180。整
 
 配置、区域策略、逐轮指标、预测及五个历史对照的完整分层比较见 [`results/unixcoder_predicted_diff/`](results/unixcoder_predicted_diff)。定位器和分类器的最佳与续训检查点保存在服务器 `checkpoints/unixcoder_predicted_diff/`。
 
+## 修改区域定位质量
+
+Oracle 噪声实验共用历史 512 位置的 UniXcoder FP32 Eager 训练入口、缩进简化、居中均匀填充与打包。用 Predicted-Diff 已保存的策略固定最多 4 个同口径行单元、127 个优先位置。0% 组按与实际修改 BPE 的重叠选择行单元，空侧邻近行用于并列和补充。各档从这组保留块中按种子 42 派生的固定顺序替换，目标是在每个划分分别尝试替换 0%、25%、50%、75%、100%。替代区从当前函数的未修改区选取，长度和间隔位置开销保持一致。无法匹配的块保留原位并单独计数。整个噪声实验含 Test 都使用特权差异信息。完整预算 Oracle 和历史预测基线均直接读取已保存结果。
+
+两个定位器在相同的历史行单元和 diff 弱标签上评价，共用 512 位置打包。上下文定位器借鉴 LLMAO 的冻结模型表示和可训练定位头。每个函数完整地覆盖在至多 512 位置的非重叠窗口中，按行单元汇聚 UniXcoder 末层隐藏状态。定位头沿用原有的四个连续均值池与卷积，以 Valid AP 选检查点。FIM 定位器借鉴 ANVIL 的掩码重建损失，以固定版本的 Qwen2.5-Coder-0.5B 为每个行单元计算零样本 teacher-forcing 平均 NLL。每侧最多读 64 个该模型的原始代码 token。[LLMAO 论文](https://arxiv.org/abs/2310.01726) · [LLMAO 表示提取](https://github.com/squaresLab/LLMAO/blob/master/codegen_loading.py) · [ANVIL 论文](https://arxiv.org/abs/2408.16028) · [ANVIL 损失实现](https://github.com/joe-weizhou-wang/anvil-paper/blob/main/llm_code_gen/helpers.py)
+
+定位器各自沿用 Predicted-Diff 的六个预算候选，在 Valid 冻结选段策略，并同时报告固定 4 区、127 位置的对照。下游分类门槛使用 Valid 原始长度 >510 BPE 的组，要求真实修改 BPE 保留率至少 58%，且较历史 Uniform Sampling 高至少 5 个百分点。Test 的分数与输入固定后才读取真实差异计算质量指标。
+
+将固定版本的 Qwen 权重和 tokenizer 放在本地 `checkpoints/locator_quality/qwen2.5-coder-0.5b/`。[Qwen2.5-Coder-0.5B 固定版本](https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B/tree/8123ea2e9354afb7ffcc6c8641d1b2f5ecf18301)
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" paired.py oracle_noise --smoke-only
+"$PYTHON" paired.py oracle_noise
+"$PYTHON" locator_quality.py contextual fim
+"$PYTHON" -m unittest discover -s tests -v
+```
+
+### Oracle 噪声敏感性结果
+
+Valid 长组在 0% 同预算 Oracle 下保留 60.38% 的真实修改 BPE。历史完整 Oracle、Predicted-Diff 和 Uniform Sampling 分别为 86.89%、39.28% 和 38.52%。这组比较先于分类训练。Test 长组的对应保留率为 62.36%、89.37%、38.55% 和 40.36%。完整 Oracle 的优先位置预算与本实验不同。
+
+| 目标替换比例 | Test 实际替换比例 | 整体修改 BPE 保留率 | 整体 MCC | >510 BPE 保留率 | >510 MCC | Test 相同配对输入 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0% | 0.00% | 69.55% | 0.0351 | 62.36% | 0.0398 | 1/564 |
+| 25% | 24.84% | 64.04% | 0.1572 | 55.56% | 0.1861 | 0/564 |
+| 50% | 49.60% | 59.91% | 0.0869 | 50.46% | 0.1164 | 0/564 |
+| 75% | 74.22% | 55.74% | 0.1595 | 45.31% | 0.1734 | 0/564 |
+| 100% | 99.13% | 51.39% | 0.0629 | 39.92% | 0.0053 | 0/564 |
+
+五组在 Test 都有 1,381 个保留块和相同的 33,631 个优先位置。100% 组的 12 个块没有找到长度合法的替代区，保留原位置。输入碰撞在实际修改保留率下降时也会消失。替换采样对每个函数独立进行，输入差异可来自任何被选源码。
+
+![保留率与 MCC 曲线](results/oracle_noise_512/retention_mcc.png)
+
+下表给出 MCC 严格超过目标的**最低实测保留率**。非单调曲线在多个区间过线，无法把这些观测点解释为必要门槛。0% 组在最后一轮的训练 BCE 为 0.6935，Valid 选中第 1 轮。本实验为一个训练种子，分类学到的判别能力也影响曲线。
+
+| MCC 目标 | Valid 整体 | Test 整体 | Valid 长组 | Test 长组 |
+| ---: | ---: | ---: | ---: | ---: |
+| >0.10 | 57.34% | 55.74% | 42.78% | 45.31% |
+| >0.12 | 57.34% | 55.74% | 46.84% | 45.31% |
+| >0.15 | 60.37% | 55.74% | 46.84% | 45.31% |
+
+每组在单张 RTX 4090 上的分类优化耗时 35.85 至 35.94 分钟。全部长度组的 MCC、F1、ROC-AUC、PR-AUC、选中轮次、过线位置和实际噪声比例见 [`summary.json`](results/oracle_noise_512/summary.json)。配置、逐轮指标和逐样本预测保存在同目录。
+
+### 定位器结果
+
+| 方法 | Valid 整体 AP | Test 整体 AP | Test 长组 AP | Test 长组 Recall@1 / @5 / @10 | Valid 长组修改保留率 | Test 长组修改保留率 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Uniform Sampling | — | — | — | — | 38.52% | 40.36% |
+| 历史词嵌入定位器 | 0.0851 | 0.0586 | 0.0466 | 1.43% / 6.56% / 12.84% | 39.28% | 38.55% |
+| 上下文隐藏状态，8 区 / 191 位置 | 0.1190 | 0.0947 | 0.0676 | 1.87% / 8.07% / 15.29% | 39.86% | 40.84% |
+| FIM 重建损失，4 区 / 127 位置 | 0.0397 | 0.0317 | 0.0271 | 0.98% / 4.98% / 10.02% | 38.19% | 40.46% |
+
+固定 4 区、127 位置时，上下文定位器的 Valid 和 Test 长组保留率为 38.57% 和 39.98%。采用 Valid 选出的 8 区、191 位置时，Valid 比 Uniform Sampling 高 1.34 个百分点。两种新定位器都低于预定门槛，本轮分类训练止于五档 Oracle 对照。
+
+上下文定位器的 Train 特征提取耗时 54.96 秒，定位头训练耗时 323.25 秒。Test 的 192,930 个区域共用 4,432 个窗口和 185 次批量编码，提取与打分合计 8.31 秒，峰值显存 0.53 GiB。FIM 对相同区域逐个遮蔽，共 3,015 次批量前向，Test 打分耗时 289.74 秒，峰值显存 1.37 GiB。两个耗时口径均从已准备的函数开始。完整分层保留率、Recall@K、配置和时序见 [`results/locator_quality_512/`](results/locator_quality_512)。
+
 ## UniXcoder 上下文感知选择
 
 三组都使用 RGCL 的 UniXcoder、CLS + `RobertaClassificationHead` 和函数级 BCE，每批只调用一次编码器。训练采用 16 轮、batch 8、学习率 2e-5、LOSVERAdamW、10% 线性预热、梯度裁剪 1 和 FP32 eager。模型与 tokenizer 从同一固定版本的本地目录加载。[UniXcoder 固定版本](https://huggingface.co/microsoft/unixcoder-base-nine/tree/5f0dc256eb0904af496d427451da5d7f90261676)

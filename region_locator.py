@@ -21,38 +21,52 @@ BATCH = 512
 LR = .001
 
 
-class Localizer(nn.Module):
-    def __init__(self):
+class RegionHead(nn.Module):
+    def __init__(self, width):
         super().__init__()
-        state = torch.load(UNIX_BASE / "pytorch_model.bin", weights_only=True, map_location="cpu", mmap=True)
-        table = state["embeddings.word_embeddings.weight"]
-        self.register_buffer("tokens", table, persistent=False)
-        self.projection = nn.Linear(table.shape[1], CHANNELS)
+        self.projection = nn.Linear(width, CHANNELS)
         self.conv = nn.Conv1d(CHANNELS, CHANNELS, 3, padding=1)
         self.score = nn.Linear(CHANNELS*2, 1)
 
-    def forward(self, tokens, offsets):
-        # Four contiguous embedding bags see every token without an N x 768 tensor.
-        bags = F.embedding_bag(tokens, self.tokens, offsets, mode="mean", include_last_offset=True)
+    def forward(self, bags):
         local = F.gelu(self.projection(bags)).reshape(-1, PARTS, CHANNELS).transpose(1, 2)
         encoded = F.gelu(self.conv(local))
         return self.score(torch.cat([encoded.mean(-1), encoded.amax(-1)], dim=1)).squeeze(-1)
 
 
+class Localizer(RegionHead):
+    def __init__(self):
+        state = torch.load(UNIX_BASE / "pytorch_model.bin", weights_only=True, map_location="cpu", mmap=True)
+        table = state["embeddings.word_embeddings.weight"]
+        super().__init__(table.shape[1])
+        self.register_buffer("tokens", table, persistent=False)
+
+    def forward(self, tokens, offsets):
+        # Four contiguous embedding bags see every token without an N x 768 tensor.
+        bags = F.embedding_bag(tokens, self.tokens, offsets, mode="mean", include_last_offset=True)
+        return super().forward(bags)
+
+
 class Regions:
-    def __init__(self, sources, truth=None):
+    def __init__(self, sources, truth=None, *, vectors=None):
         self.sources = sources
-        self.index = [(i, r.start, r.end) for i, source in enumerate(sources) for r in source.regions]
         self.limits = list(accumulate((len(s.regions) for s in sources), initial=0))
         self.truth = np.concatenate(truth) if truth is not None else None
+        self.vectors = vectors
+        self.index = [(i, r.start, r.end) for i, source in enumerate(sources) for r in source.regions] if vectors is None else None
+        if vectors is not None and (len(vectors) != len(self) or vectors.ndim != 3 or vectors.shape[1] != PARTS):
+            raise ValueError("Contextual vectors must align with the ordered source regions")
 
     def __len__(self):
-        return len(self.index)
+        return self.limits[-1]
 
     def __getitem__(self, i):
         return i
 
     def collate(self, indices):
+        labels = torch.from_numpy(self.truth[indices]).float() if self.truth is not None else None
+        if self.vectors is not None:
+            return self.vectors[indices], None, labels
         chunks, lengths = [], []
         for index in indices:
             i, a, b = self.index[index]
@@ -60,7 +74,6 @@ class Regions:
             lengths.extend((b-a)*k//PARTS - (b-a)*(k-1)//PARTS for k in range(1, PARTS+1))
         ids = torch.from_numpy(np.concatenate(chunks))
         offsets = torch.tensor(list(accumulate(lengths, initial=0)), dtype=torch.int32)
-        labels = torch.from_numpy(self.truth[indices]).float() if self.truth is not None else None
         return ids, offsets, labels
 
     def loader(self, *, shuffle=False):
@@ -78,25 +91,30 @@ def weak_targets(sources, edits):
     return labels
 
 
+def region_logits(model, values, offsets):
+    values = values.cuda()
+    return model(values, offsets.cuda()) if offsets is not None else model(values.float())
+
+
 @torch.inference_mode()
 def score_regions(model, data):
     model.eval()
     torch.cuda.synchronize()
     started = perf_counter()
-    values = [model(ids.cuda(), offsets.cuda()).sigmoid().cpu().numpy() for ids, offsets, _ in data.loader()]
+    values = [region_logits(model, x, offsets).sigmoid().cpu().numpy() for x, offsets, _ in data.loader()]
     scores = np.concatenate(values) if values else np.empty(0, dtype=np.float32)
     if not np.isfinite(scores).all():
         raise ValueError("Nonfinite localizer prediction")
     return scores, perf_counter()-started
 
 
-def region_metrics(predictions, labels):
+def region_metrics(predictions, labels, *, ks=(1, 5, 10)):
     y, p = np.concatenate(labels), np.concatenate(predictions)
     positives = int(y.sum())
     result = dict(functions=len(labels), regions=len(y), positive_regions=positives,
                   functions_with_positive=sum(bool(label.any()) for label in labels),
                   ap=float(average_precision_score(y, p)), auc=float(roc_auc_score(y, p)))
-    for k in (1, 5, 10):
+    for k in ks:
         hits = [int(label[np.argsort(-score, kind="stable")[:k]].sum())
                 for score, label in zip(predictions, labels, strict=True) if label.any()]
         result[f"top{k}"] = dict(hit_functions=sum(x > 0 for x in hits), recall=sum(hits)/positives,
@@ -104,11 +122,12 @@ def region_metrics(predictions, labels):
     return result
 
 
-def train_localizer(sources, targets, weights, results):
+def train_localizer(sources, targets, weights, results, *, vectors=None, feature_config=None):
     """Train/Valid weak labels are supplied explicitly; scores require only source."""
     weights.mkdir(parents=True, exist_ok=True)
     started = perf_counter()
-    train, valid = (Regions(sources[split], targets[split]) for split in ("train", "valid"))
+    train, valid = (Regions(sources[split], targets[split], vectors=vectors[split] if vectors is not None else None)
+                    for split in ("train", "valid"))
     positive = int(train.truth.sum())
     if not 0 < positive < len(train):
         raise ValueError("Repair localizer requires positive and negative training regions")
@@ -117,9 +136,11 @@ def train_localizer(sources, targets, weights, results):
                   source_model=str(UNIX_BASE), frozen_input_embeddings=True, pos_weight=ratio,
                   target="region intersects same-side historical edit or empty-side neighboring lines",
                   selection="full validation region average precision, earliest tie")
+    if feature_config is not None:
+        config.update(feature_config)
     write_json(results / "config.json", config)
     set_seed(SEED)
-    model = Localizer().cuda()
+    model = (Localizer() if vectors is None else RegionHead(train.vectors.shape[-1])).cuda()
     optimizer = LOSVERAdamW(model.parameters(), lr=LR, eps=1e-8)
     history = []
     if (weights / "last.pt").exists():
@@ -132,8 +153,8 @@ def train_localizer(sources, targets, weights, results):
         model.train()
         before = perf_counter()
         losses = []
-        for ids, offsets, labels in train.loader(shuffle=True):
-            logits = model(ids.cuda(), offsets.cuda())
+        for inputs, offsets, labels in train.loader(shuffle=True):
+            logits = region_logits(model, inputs, offsets)
             loss = F.binary_cross_entropy_with_logits(logits, labels.cuda(), pos_weight=pos_weight)
             loss.backward()
             optimizer.step()

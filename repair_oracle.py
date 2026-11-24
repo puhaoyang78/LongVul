@@ -134,6 +134,36 @@ def overlap_bpe(left, right):
     return total
 
 
+def grouped_edit_retention(observations):
+    """Summarize original-BPE visibility for (length, raw annotations, visible runs)."""
+    per_function = []
+    for length, edits, visible in observations:
+        edits = dict(edits, actual_edits=merge([span for kind in EDIT_TYPES for span in edits[kind]]))
+        counts = {kind: (overlap_bpe(spans, visible), sum(hi-lo for lo, hi in spans))
+                  for kind, spans in edits.items()}
+        per_function.append((length, counts))
+    groups = {}
+    for group, (lo, hi) in GROUPS.items():
+        members = [counts for length, counts in per_function if lo <= length <= hi]
+        kinds = {}
+        for kind in (*EDIT_TYPES, *GAP_TYPES, "actual_edits"):
+            retained = sum(m[kind][0] for m in members)
+            available = sum(m[kind][1] for m in members)
+            kinds[kind] = dict(retained_bpe=retained, available_bpe=available,
+                               fraction=retained/available if available else None)
+        groups[group] = kinds
+    return groups
+
+
+def packed_edit_retention(data, annotations):
+    def observations():
+        for ex, edits in zip(data.examples, annotations, strict=True):
+            raw = ex["fixed"][1, :ex["length"]].tolist()
+            yield ex["raw"], edits, merge([(i, i+1) for i in raw if i >= 0])
+
+    return grouped_edit_retention(observations())
+
+
 def repair_retention(oracle_root, baseline_root, *, extra_predictions=None):
     """Score saved test selections against the same raw edit intervals."""
     paths = {method: baseline_root / method / "test.csv.gz" for method in ("uniform_sampling", "context_aware")}
@@ -149,24 +179,11 @@ def repair_retention(oracle_root, baseline_root, *, extra_predictions=None):
             raise ValueError("the two repair oracles disagree on edits or reserved anchors")
     result = {}
     for method, rows in predictions.items():
-        per_function = []
+        observations = []
         for repair, selected in zip(reference, rows, strict=True):
             if any(repair[key] != selected[key] for key in ("idx", "sample_key", "target", "original_bpe")):
                 raise ValueError(f"{method}: test membership or tokenizer differs")
-            edits = json.loads(repair["repair_bpe_spans"])
-            edits["actual_edits"] = merge([span for kind in EDIT_TYPES for span in edits[kind]])
-            visible = json.loads(selected["source_runs"])
-            counts = {kind: (overlap_bpe(spans, visible), sum(hi-lo for lo, hi in spans))
-                      for kind, spans in edits.items()}
-            per_function.append((int(selected["original_bpe"]), counts))
-        result[method] = {}
-        for group, (lo, hi) in GROUPS.items():
-            members = [counts for length, counts in per_function if lo <= length <= hi]
-            kinds = {}
-            for kind in (*EDIT_TYPES, *GAP_TYPES, "actual_edits"):
-                retained = sum(m[kind][0] for m in members)
-                available = sum(m[kind][1] for m in members)
-                kinds[kind] = dict(retained_bpe=retained, available_bpe=available,
-                                   fraction=retained/available if available else None)
-            result[method][group] = kinds
+            observations.append((int(selected["original_bpe"]), json.loads(repair["repair_bpe_spans"]),
+                                 json.loads(selected["source_runs"])))
+        result[method] = grouped_edit_retention(observations)
     return dict(privileged_methods=METHODS, split="test", groups=result)

@@ -182,31 +182,39 @@ def tokenized_batches(rows, tokenizer):
         yield batch, texts, encoding
 
 
-class CompactData(Dataset):
-    def __init__(self, split, tokenizer, *, alternatives=False, prepare=None, prepare_pair=None):
-        rows = prime_source_rows(DATA, split)
+class PackedData(Dataset):
+    def __init__(self, rows, examples):
         self.targets = torch.tensor([r["target"] for r in rows])
         self.metadata, self.examples = [], []
-        if prepare is None:
-            prepare = partial(prepare_function, alternatives=alternatives)
-        for batch, texts, encoding in tokenized_batches(rows, tokenizer):
-            sources = zip(texts, encoding.input_ids, encoding.offset_mapping, strict=True)
-            if prepare_pair is None:
-                examples = (prepare(*source, tokenizer) for source in sources)
-            else:
-                examples = chain.from_iterable(prepare_pair(a, b, tokenizer)
-                                                for a, b in zip(sources, sources, strict=True))
-            for row, ids, example in zip(batch, encoding.input_ids, examples, strict=True):
-                example["label"] = row["target"]
-                self.examples.append(example)
-                self.metadata.append(dict(idx=row["idx"], sample_key=row["sample_key"],
-                                          target=row["target"], original_bpe=len(ids)))
+        for row, example in zip(rows, examples, strict=True):
+            example["label"] = row["target"]
+            self.examples.append(example)
+            self.metadata.append(dict(idx=row["idx"], sample_key=row["sample_key"],
+                                      target=row["target"], original_bpe=example["raw"]))
 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, index):
         return self.examples[index]
+
+
+class CompactData(PackedData):
+    def __init__(self, split, tokenizer, *, alternatives=False, prepare=None, prepare_pair=None):
+        rows = prime_source_rows(DATA, split)
+        if prepare is None:
+            prepare = partial(prepare_function, alternatives=alternatives)
+
+        def examples():
+            for _, texts, encoding in tokenized_batches(rows, tokenizer):
+                sources = zip(texts, encoding.input_ids, encoding.offset_mapping, strict=True)
+                if prepare_pair is None:
+                    yield from (prepare(*source, tokenizer) for source in sources)
+                else:
+                    yield from chain.from_iterable(prepare_pair(a, b, tokenizer)
+                                                   for a, b in zip(sources, sources, strict=True))
+
+        super().__init__(rows, examples())
 
 
 def collate(examples):

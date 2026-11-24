@@ -6,10 +6,10 @@ from time import perf_counter
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from transformers import set_seed
 
-from compaction import BUDGET, collate, line_boundaries, tokenized_batches
+from compaction import BUDGET, PackedData, collate, line_boundaries, tokenized_batches
 from context_selection import describe, input_layout, merge, occupied
 from paired import (BACKBONES, BATCH_SIZE, DATA, MAX_LENGTH, ORACLE_RESULTS, PREDICTED_DIFF, ROOT, SEED, UNIX_RESULTS,
                     classifier_config, fit_classifier, grouped_metrics, make_model, predict, prime_source_rows, to_gpu)
@@ -104,23 +104,12 @@ def calibrate(sources, scores, edits, tokenizer):
                 functions=len(cohort), available_bpe=available, trials=trials)
 
 
-class PredictedData(Dataset):
+class PredictedData(PackedData):
     def __init__(self, rows, sources, scores, tokenizer, policy):
         started = perf_counter()
-        self.examples, self.metadata = [], []
-        for row, source, scores_for_source in zip(rows, sources, scores, strict=True):
-            example = prepare_example(source, scores_for_source, tokenizer, policy["top_k"], policy["anchor_budget"])
-            self.examples.append(dict(example, label=row["target"]))
-            self.metadata.append(dict(idx=row["idx"], sample_key=row["sample_key"], target=row["target"],
-                                      original_bpe=len(source.raw_ids)))
-        self.targets = torch.tensor([row["target"] for row in self.metadata])
+        super().__init__(rows, (prepare_example(s, p, tokenizer, policy["top_k"], policy["anchor_budget"])
+                                for s, p in zip(sources, scores, strict=True)))
         self.seconds = perf_counter()-started
-
-    def __getitem__(self, index):
-        return self.examples[index]
-
-    def __len__(self):
-        return len(self.examples)
 
 
 def fragment_report(data):
@@ -139,7 +128,7 @@ def fragment_report(data):
     return report
 
 
-def evaluate(model, data, split):
+def evaluate(model, data, split, *, root=RESULTS, fields=FIELDS):
     loader = DataLoader(data, batch_size=BATCH_SIZE, collate_fn=collate)
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -147,7 +136,7 @@ def evaluate(model, data, split):
     scores, _ = predict(model, loader)
     seconds, peak = perf_counter()-started, torch.cuda.max_memory_allocated()
     groups = grouped_metrics(data, scores)
-    selection = describe(data, scores, RESULTS / f"{split}.csv.gz", paired=split == "test", include=FIELDS)
+    selection = describe(data, scores, root / f"{split}.csv.gz", paired=split == "test", include=fields)
     return dict(groups=groups, selection=selection, inference_seconds=seconds, peak_inference_allocated_bytes=peak,
                 model_tokens=selection["overall"]["input_tokens"])
 

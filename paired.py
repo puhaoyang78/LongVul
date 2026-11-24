@@ -38,7 +38,8 @@ UNIX_WEIGHTS = ROOT / "checkpoints" / "unixcoder_context"
 ORACLE_RESULTS = ROOT / "results" / "unixcoder_repair_oracle"
 ORACLE_WEIGHTS = ROOT / "checkpoints" / "unixcoder_repair_oracle"
 PREDICTED_DIFF = "predicted_diff"
-UNIX_METHODS = (*context.METHODS, *repair.METHODS, PREDICTED_DIFF)
+ORACLE_NOISE = "oracle_noise"
+UNIX_METHODS = (*context.METHODS, *repair.METHODS, PREDICTED_DIFF, ORACLE_NOISE)
 
 
 def make_model(tokenizer, method, *, long_input=False, pretrained=True):
@@ -431,6 +432,10 @@ def classifier_config(method):
 
 
 def run(method, tokenizer):
+    if method == ORACLE_NOISE:
+        from oracle_noise import run_oracle_noise
+
+        return run_oracle_noise(tokenizer)
     if method == PREDICTED_DIFF:
         from predicted_diff import run_predicted_diff
 
@@ -520,7 +525,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     if args.smoke_only:
         set_seed(SEED)
-        if PREDICTED_DIFF in args.methods:
+        if ORACLE_NOISE in args.methods:
+            from oracle_noise import run_oracle_noise
+
+            run_oracle_noise(load_tokenizer("unixcoder", UNIX_BASE), budget_only=True)
+        elif PREDICTED_DIFF in args.methods:
             from predicted_diff import smoke_predicted_diff
 
             smoke_predicted_diff(load_tokenizer("unixcoder", UNIX_BASE))
