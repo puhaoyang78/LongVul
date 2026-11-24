@@ -345,6 +345,16 @@ def visible_source(example):
     return merge([(i, i+1) for i in positions if i >= 0])
 
 
+def write_prediction_rows(path, rows):
+    temporary = path.with_suffix(".tmp")
+    with gzip.open(temporary, "wt", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in row.items()})
+    temporary.replace(path)
+
+
 def describe(data, scores, path, *, paired, include=()):
     rows, inputs = [], []
     if scores is None:
@@ -368,13 +378,7 @@ def describe(data, scores, path, *, paired, include=()):
     for i, same in enumerate(same for _, same in pairs):
         rows[2*i]["identical_pair_input"] = rows[2*i+1]["identical_pair_input"] = same
     if path is not None:
-        temporary = path.with_suffix(".tmp")
-        with gzip.open(temporary, "wt", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in row.items()})
-        temporary.replace(path)
+        write_prediction_rows(path, rows)
 
     summary = {}
     for name, (lo, hi) in GROUPS.items():

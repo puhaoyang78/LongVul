@@ -67,11 +67,13 @@ def to_gpu(batch, *, labels=False):
 def train_epoch(model, loader, optimizer, scheduler, *, bf16=False):
     model.train()
     losses, gradients = [], []
-    selector = list(model.conv.parameters()) + list(model.scorer.parameters()) if model.scorer is not None else []
+    components = {}
+    selector = list(model.conv.parameters()) + list(model.scorer.parameters()) if getattr(model, "scorer", None) is not None else []
     accumulation = BATCH_SIZE // loader.batch_size
     for i, batch in enumerate(loader):
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
-            loss = model(to_gpu(batch, labels=True))["loss"]
+            report = model(to_gpu(batch, labels=True))
+            loss = report["loss"]
         if accumulation == 1:
             loss.backward()
         else:
@@ -86,7 +88,10 @@ def train_epoch(model, loader, optimizer, scheduler, *, bf16=False):
             optimizer.zero_grad(set_to_none=True)
             scheduler.step()
         losses.append(loss.detach())
+        for name, value in report.get("loss_components", {}).items():
+            components.setdefault(name, []).append(value.detach())
     result = dict(train_loss=torch.stack(losses).mean().item())
+    result.update({name: torch.stack(values).mean().item() for name, values in components.items()})
     if gradients:
         norms = torch.stack(gradients)
         result.update(selector_batches=len(gradients), selector_nonzero_batches=int(norms.gt(0).sum().item()),

@@ -1,0 +1,75 @@
+{
+  "config": {
+    "method": "joint_1.0",
+    "seed": 1234,
+    "epochs": 16,
+    "batch_size": 8,
+    "length": 512,
+    "lr": 2e-05,
+    "eps": 1e-08,
+    "optimizer": "LOSVERAdamW",
+    "weight_decay": 0.0,
+    "warmup": 0.1,
+    "grad_clip": 1.0,
+    "precision": "FP32 on cached FP16 blocks",
+    "model": "/home/PublicData/PHY-data/resource/unixcoder-base-nine",
+    "loss": "function BCE and labeled-function mean KL",
+    "class_weight": 1.0,
+    "threshold": 0.5,
+    "comparison": ">",
+    "selection": "highest full validation MCC, earliest tie",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "cuda": "12.8",
+    "torch": "2.9.1+cu128",
+    "transformers": "4.57.3",
+    "python": "3.11.14",
+    "model_id": "microsoft/unixcoder-base-nine",
+    "model_revision": "5f0dc256eb0904af496d427451da5d7f90261676",
+    "block_size": 32,
+    "query_heads": 4,
+    "index_dimension": 128,
+    "full_encoder_precision": "BF16 SDPA",
+    "full_encoder_window_batch": 24,
+    "historical_input_revision": "9d9536371b20ae3ea445254d8b4a4a6f36e252e1",
+    "split_functions": {
+      "train": 8708,
+      "valid": 1124,
+      "test": 1128
+    },
+    "stage": "coarse",
+    "supervision": "joint",
+    "repair_weight": 1.0,
+    "repair_only_task_gradient": null
+  },
+  "selected_epoch": 15,
+  "validation": {
+    "accuracy": 0.5453736654804271,
+    "precision": 0.5502958579881657,
+    "recall": 0.49644128113879005,
+    "f1": 0.5219831618334893,
+    "mcc": 0.09118504450644115,
+    "auc": 0.5457472676384545,
+    "auprc": 0.5454805256813141,
+    "tp": 279,
+    "tn": 334,
+    "fp": 228,
+    "fn": 283,
+    "confusion_matrix": [
+      [
+        334,
+        228
+      ],
+      [
+        283,
+        279
+      ]
+    ],
+    "samples": 1124,
+    "threshold": 0.5
+  },
+  "train_seconds": 185.54677191842347,
+  "validation_seconds": 6.725079557276331,
+  "peak_train_allocated_bytes": 571998720,
+  "last_three_mean_train_loss": 2.431487719217936,
+  "one_class_valid_epochs": 0
+}
