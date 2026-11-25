@@ -2,7 +2,92 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
-## Repair-Guided Coarse-to-Fine Encoding
+## 中心优先的 Repair-Guided Coarse-to-Fine Encoding
+
+冻结的 UniXcoder 以非重叠窗口编码完整函数。历史 Simple 缩进压缩保留原始 BPE 映射，目标长度 32 BPE 的块汇聚窗口内的上下文表示。Mean 和 Max 得到全局状态，四个 128 维 Query 对块排序。固定 32 BPE 沿用三个历史 Task + Repair 索引器和对应的修复损失权重。语句对齐 32 BPE 用其自身的块表示重新进行 16 轮全局训练和 16 轮联合索引训练。
+
+精细分支先保留预算内的高分完整块，再用 Tree-sitter 提取条件头、声明、前置赋值和语句补全。上下文选择沿用 Context-Aware 的关系优先级与边际预算计算。共享上下文去重，剩余位置按分数继续填充。正文和内部 SEP 共 510 个位置，CLS 和末尾 SEP 各占一个。短函数保留完整 Simple 正文。精细训练冻结索引器和全局分支，独立微调第二个 UniXcoder。三种融合在相同检索方案上比较，对历史粗表示、Mean + Max 或索引加权均值分别做线性投影，再加到精细 CLS 上。
+
+4 个上下文预算先用三个历史检查点和完整 Valid 比较。非零预算以整体 MCC 名次乘二，加长组真实修改保留率名次与同锚点共保留增量名次选定。分块和融合分别以 Seed 42 的完整 Valid MCC 选定，补充种子沿用该配置。历史修复标注用于索引训练、Valid 诊断及保存预测后的 Test 诊断。分类与检索的 Test 输入来自当前函数。
+
+512 是精细编码预算。推理计时在模型加载后从读取源码开始，到输出概率为止，包含原始分词、全函数窗口编码、索引、语法检索、打包和精细分支。结果同时按原始 UniXcoder BPE 和共同的原始 CodeBERT BPE 分层，配对按两侧较长的函数分组。CodeBERT 分层通过两种窗口基线和 StagedVulBERT 的保存结果核对样本键、标签与长度。Test 四个分组为 305、242、235 和 346 个函数。
+
+### 冻结检查点的 Valid 预算选择
+
+| 上下文位置 | 整体 MCC | 长组 MCC | 长组修改 BPE 保留 | 长组同锚点共保留增量 |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 0.0913 | 0.0689 | 46.42% | 0.00 pp |
+| 64 | 0.0854 | 0.0587 | 45.36% | +32.83 pp |
+| 96 | 0.0908 | 0.0681 | 45.12% | +37.70 pp |
+| 128 | 0.0901 | 0.0672 | 45.18% | +40.60 pp |
+
+三种子的零预算布局、输入长度和判定均与历史结果一致，复验概率的绝对误差不超过 `1e-6`。96 与 128 的加权名次相同，96 以更高的平均整体 Valid MCC 入选。96 的中心上限为 414 位置，需选段长函数平均保留 393.89 个中心 BPE、78.97 个关联 BPE 和 26.08 个填充 BPE，特殊位置平均为 13.05。关联共保留增加，真实修改保留略降。表中指标来自固定检查点输入干预，正式结果来自独立训练。[预算策略及逐种子结果](results/coarse_to_fine_center_512/budget_policy.json)
+
+### Seed 42 分块对照
+
+| 方案 | Valid MCC | Test 整体 MCC | >510 MCC | ≥2041 MCC | 长组修改 BPE 保留 | 长组锚点语句完整 | 需选段长组平均片段数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 历史固定 32 Coarse-to-Fine | 0.12937 | 0.1095 | 0.0998 | 0.0594 | 49.19% | — | 7.37 |
+| 固定 32 + Context | **0.08338** | 0.1034 | 0.0723 | −0.0250 | 48.25% | 87.18% | 12.39 |
+| 语句对齐 32 + Context | 0.08292 | 0.0869 | 0.0817 | 0.0691 | 48.95% | 97.18% | 12.58 |
+
+后两组执行 16 轮独立精细训练，使用相同的 96 位置上下文预算及历史融合。语句对齐提高了锚点语句完整率，也在 ≥2041 UniXcoder BPE 组上提高 MCC。其整体 MCC 低于固定 32，长组 MCC 高于固定 32、低于历史版。固定 32 的 Valid MCC 高 0.00046，因此后续融合使用固定 32。1,128 个 Test 函数的端到端耗时分别为 36.69 秒和 55.32 秒，语句对齐单独用于分块的语法分析耗时 19.10 秒。[分块选择](results/coarse_to_fine_center_512/retrieval_policy.json) · [固定分块](results/coarse_to_fine_center_512/seed42/center_context/metrics.json) · [语句对齐](results/coarse_to_fine_center_512/seed42/statement_context/metrics.json)
+
+### Seed 42 融合对照
+
+| 融合 | Valid MCC | Test 整体 MCC | >510 MCC | ≥2041 MCC | 配对正确率 | 配对排序准确率 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Original | 0.08338 | 0.1034 | 0.0723 | −0.0250 | 7.80% | 64.72% |
+| Global | **0.10500** | 0.0941 | 0.0888 | 0.0758 | 20.21% | 56.74% |
+| Weighted | 0.09949 | 0.0786 | 0.0388 | 0.0529 | 10.99% | 63.12% |
+
+三组共享固定 32 BPE 索引器和 96 位置上下文策略，长度组按原始 UniXcoder BPE 划分。Global 在 Valid 入选。其 Test 配对正确率更高，配对排序准确率较低。Weighted 的最后三轮平均训练 BCE 为 0.608，Original 和 Global 分别为 0.352 和 0.314。各组均完成 16 轮。[融合选择](results/coarse_to_fine_center_512/fusion_policy.json) · [Global](results/coarse_to_fine_center_512/seed42/global_fusion/metrics.json) · [Weighted](results/coarse_to_fine_center_512/seed42/weighted_fusion/metrics.json)
+
+### 三种子 Test 结果
+
+最终方案为固定 32 BPE、96 位置上下文和 Global Fusion。表中 MCC 为种子 42、1234、123456 的均值 ± 样本标准差。
+
+| 方案 | 整体 | UniXcoder >510 | UniXcoder ≥2041 | CodeBERT >510 | CodeBERT ≥2041 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 历史 Coarse-to-Fine | 0.0792 ± 0.0307 | 0.0601 ± 0.0420 | 0.0295 ± 0.0340 | 0.0627 ± 0.0370 | 0.0285 ± 0.0469 |
+| 历史 Global + Uniform | 0.0787 ± 0.0101 | 0.0560 ± 0.0169 | −0.0014 ± 0.0288 | 0.0577 ± 0.0190 | 0.0208 ± 0.0217 |
+| Context-Aware | 0.0956 ± 0.0211 | 0.0720 ± 0.0205 | 0.0196 ± 0.0127 | 0.0786 ± 0.0205 | 0.0460 ± 0.0174 |
+| Global Fusion + Uniform | 0.0643 ± 0.0140 | 0.0284 ± 0.0057 | −0.0128 ± 0.0332 | 0.0395 ± 0.0083 | 0.0064 ± 0.0283 |
+| **Center + Context + Global Fusion** | **0.1065 ± 0.0158** | **0.0882 ± 0.0182** | **0.0626 ± 0.0304** | **0.1007 ± 0.0259** | **0.0498 ± 0.0311** |
+
+固定 Global Fusion 后，中心优先检索在三个种子上均提高整体与长组 MCC。整体 MCC 差值分别为 +0.0313、+0.0500 和 +0.0453。匹配均匀对照的 Seed 1234 优化较慢，最后三轮平均 BCE 为 0.691。相较历史 Coarse-to-Fine 和 Context-Aware，最终方案的平均整体与长组 MCC 均较高，Seed 42 的整体与长组 MCC 均落后于这两个对照。统一到 CodeBERT ≥2041 口径后，对 Context-Aware 的平均 MCC 差值为 +0.0038。
+
+最终方案整体 F1、Precision、Recall、ROC-AUC、PR-AUC 的均值分别为 0.5537、0.5529、0.5550、0.5622、0.5565。UniXcoder ≥2041 组的 ROC-AUC 为 0.5140，历史 Coarse-to-Fine 为 0.5287。最终方案的整体配对正确率为 17.85%，高于历史 Coarse-to-Fine 的 15.07% 和匹配均匀对照的 10.70%。配对排序准确率为 57.57%，低于两者的 59.81% 和 60.70%。[完整均值、标准差、逐种子指标及外部基线统一分层](results/coarse_to_fine_center_512/summary.json)
+
+UniXcoder 长组的真实修改 BPE 保留率为 48.12%，匹配均匀对照与历史 Coarse-to-Fine 分别为 40.36% 和 49.22%。纯插入和删除空侧邻近区域分别保留 42.01% 和 44.66%。在同一批完整锚点上，布局较零预算对照的共保留率从 43.79% 升至 87.40%。需选段长函数平均分配 393.79 个中心 BPE、78.86 个关联 BPE、26.12 个填充 BPE 和 13.22 个特殊位置，平均有 12.22 个片段，每片段平均 40.81 BPE。匹配均匀对照平均有 7.08 个片段。长组精细输入碰撞率由匹配均匀对照的 5.35% 降至 1.43%。
+
+最终方案和匹配均匀对照对 1,128 个 Test 函数的平均端到端耗时分别为 36.68 秒和 21.58 秒。最终方案的索引打分约 0.52 秒，检索和打包约 15.60 秒，匹配均匀的检索和打包约 1.25 秒。两者均使用 4,432 个全局窗口和 1,128 个精细输入，共 326 次批量前向、2,432,962 个有效位置和 2,845,256 个含 padding 的位置。两者的峰值推理显存均为 1.11 GiB，精细训练平均分别耗时 35.91 和 35.84 分钟，峰值约 6.45 GiB。语句对齐对照的全局模型及联合索引训练另耗时 118.13 和 182.07 秒。[成本和逐样本预测](results/coarse_to_fine_center_512/) · [GPU smoke](results/coarse_to_fine_center_512/smoke.json)
+
+### 复现
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" -m unittest discover -s tests -v
+"$PYTHON" coarse_to_fine.py --stage smoke
+"$PYTHON" coarse_to_fine.py --stage budget
+"$PYTHON" coarse_to_fine.py --stage fine --seed 42 --methods center_context statement_context
+"$PYTHON" coarse_to_fine.py --stage fine --seed 42 --methods global_fusion weighted_fusion
+"$PYTHON" coarse_to_fine.py --stage fine --seed 1234 --methods final
+"$PYTHON" coarse_to_fine.py --stage fine --seed 123456 --methods final
+for seed in 42 1234 123456; do
+    "$PYTHON" coarse_to_fine.py --stage fine --seed "$seed" --methods matched_uniform
+done
+"$PYTHON" paired.py context_aware --seed 1234
+"$PYTHON" paired.py context_aware --seed 123456
+"$PYTHON" coarse_to_fine.py --stage report
+```
+
+共享缓存和历史检查点从服务器的 `checkpoints/coarse_to_fine_512/` 和 `checkpoints/longvul_adaptive_512/` 读取。新检查点及续训状态保存在 `checkpoints/coarse_to_fine_center_512/`。当最终分块、索引器和融合与历史 Global + Uniform 匹配时，均匀对照直接复用其预测。实验配置、逐轮指标、分项耗时和逐样本预测保存在结果目录。[中心优先实验](results/coarse_to_fine_center_512/)
+
+## 历史实验 · 跨块交互与关联区域检索
+
+以下跨块交互和区域替换反馈实验可在提交 `3a82c39` 复现，机制诊断使用提交 `8674e25`。[历史实现](https://github.com/puhaoyang78/LongVul/tree/3a82c39b01e3df0383b2400d56b73ff946b3acfe) · [机制诊断](results/coarse_to_fine_diagnosis/report.md)
 
 LongVul 先编码完整函数，再在 512 个位置内精细编码所检索的源码。跨块交互借鉴 HAT、Longformer 和 Perceiver IO，索引和分类反馈分别借鉴 QSA、DSA 和 CogLTX。两个 UniXcoder 分支均沿用预训练模型的注意力实现。[HAT](https://arxiv.org/abs/2210.05529) · [Longformer](https://arxiv.org/abs/2004.05150) · [Perceiver IO](https://arxiv.org/abs/2107.14795) · [Qwen QSA](https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf) · [DeepSeek DSA](https://arxiv.org/abs/2512.02556) · [CogLTX](https://proceedings.neurips.cc/paper/2020/hash/96671501524948bc3937b4b30d0e57b9-Abstract.html)
 
@@ -20,7 +105,7 @@ LongVul 先编码完整函数，再在 512 个位置内精细编码所检索的�
 
 Context Retrieval 与 Full 从相同的第 8 轮模型、优化器和调度状态继续训练。另用 Full 的同一检查点及每个函数的同一组 `g`、`z_g` 将精细输入替换成均匀布局，直接测量检索差异。各组沿用 batch 8、LOSVERAdamW、学习率 2e-5、10% 预热和统一的 Valid MCC 选模。补充种子复跑 Context Retrieval、Full 和 Global + Uniform。历史 Diff 用于 Train 监督、Valid 诊断和策略选择，以及保存预测后的 Test 诊断。Test 编码和检索仅访问当前函数源码。
 
-512 是精细分支的位置上限。端到端成本还包含完整函数的多窗口编码。程序按阶段记录分词、语法解析、块汇聚、跨块交互、索引、检索与精细编码，分别统计真实编码位置、padding、批量前向和排序反馈训练成本。
+512 是精细分支的位置上限。端到端成本还包含完整函数的多窗口编码。程序按阶段记录分词、语法解析、块汇聚、跨块交互、索引、检索与精细编码，分别统计真实编码位置、padding、批量前向和排序反馈训练成本。以下命令在 `3a82c39` 的历史工作树中运行。
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4 TOKENIZERS_PARALLELISM=true

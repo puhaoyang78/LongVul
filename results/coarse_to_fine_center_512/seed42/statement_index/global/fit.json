@@ -1,0 +1,78 @@
+{
+  "config": {
+    "method": "statement_index_global",
+    "seed": 42,
+    "epochs": 16,
+    "batch_size": 8,
+    "length": 512,
+    "lr": 2e-05,
+    "eps": 1e-08,
+    "optimizer": "LOSVERAdamW",
+    "weight_decay": 0.0,
+    "warmup": 0.1,
+    "grad_clip": 1.0,
+    "precision": "FP32 on cached FP16 blocks",
+    "model": "/home/PublicData/PHY-data/resource/unixcoder-base-nine",
+    "loss": "function BCE",
+    "class_weight": 1.0,
+    "threshold": 0.5,
+    "comparison": ">",
+    "selection": "highest full validation MCC, earliest tie",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "cuda": "12.8",
+    "torch": "2.9.1+cu128",
+    "transformers": "4.57.3",
+    "python": "3.11.14",
+    "model_id": "microsoft/unixcoder-base-nine",
+    "model_revision": "5f0dc256eb0904af496d427451da5d7f90261676",
+    "block_size": 32,
+    "query_heads": 4,
+    "index_dimension": 128,
+    "full_encoder_precision": "BF16 SDPA",
+    "full_encoder_window_batch": 24,
+    "tree_sitter": "0.25.2",
+    "tree_sitter_cpp": "0.23.4",
+    "historical_input_revision": "9d9536371b20ae3ea445254d8b4a4a6f36e252e1",
+    "split_functions": {
+      "train": 8708,
+      "valid": 1124,
+      "test": 1128
+    },
+    "block_layout": "statement32",
+    "stage": "coarse",
+    "supervision": "global",
+    "repair_weight": 0.0,
+    "historical_index": "joint_1.0"
+  },
+  "selected_epoch": 12,
+  "validation": {
+    "accuracy": 0.5266903914590747,
+    "precision": 0.5210084033613446,
+    "recall": 0.6619217081850534,
+    "f1": 0.5830721003134797,
+    "mcc": 0.05544727668609234,
+    "auc": 0.5339756335406087,
+    "auprc": 0.5348385139476768,
+    "tp": 372,
+    "tn": 220,
+    "fp": 342,
+    "fn": 190,
+    "confusion_matrix": [
+      [
+        220,
+        342
+      ],
+      [
+        190,
+        372
+      ]
+    ],
+    "samples": 1124,
+    "threshold": 0.5
+  },
+  "train_seconds": 118.12602345098276,
+  "validation_seconds": 4.956114221247844,
+  "peak_train_allocated_bytes": 562467840,
+  "last_three_mean_train_loss": 0.6833790938059489,
+  "one_class_valid_epochs": 0
+}

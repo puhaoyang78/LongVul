@@ -22,7 +22,7 @@ from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, col
 from csp_model import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, CompactionClassifier, pack
 from window_inputs import BASE, DATA, ROOT, grouped_metrics
 from rgcl.artifacts import write_json
-from rgcl.config import ADAM_EPSILON, BACKBONES, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, WARMUP_FRACTION
+from rgcl.config import ADAM_EPSILON, BACKBONES, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, SEEDS, WARMUP_FRACTION
 from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
 from rgcl.model import Detector, build_model, load_tokenizer
@@ -471,7 +471,9 @@ def fit_512_inputs(tokenizer, datasets, root, weights, *, method, seed, configur
     return result
 
 
-def run(method, tokenizer):
+def run(method, tokenizer, *, seed=SEED):
+    if seed != SEED and method != "context_aware":
+        raise ValueError("Supplementary seeds are configured for Context-Aware")
     if method == ORACLE_NOISE:
         from oracle_noise import run_oracle_noise
 
@@ -483,17 +485,22 @@ def run(method, tokenizer):
     unixcoder = method in UNIX_METHODS
     privileged = method in repair.METHODS
     root = (ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS) / method
+    if seed != SEED:
+        root = root / f"seed{seed}"
     if (root / "metrics.json").exists():
         print(method, "already complete", flush=True)
         return
     weights = (ORACLE_WEIGHTS if privileged else UNIX_WEIGHTS if unixcoder else WEIGHTS) / method
+    if seed != SEED:
+        weights = weights / f"seed{seed}"
     weights.mkdir(parents=True, exist_ok=True)
-    set_seed(SEED)
+    set_seed(seed)
     model = make_model(tokenizer, method)
     use_selection, use_positions = METHODS.get(method, (False, False))
     train, train_prep = measure_data("train", tokenizer, method)
     valid, valid_prep = measure_data("valid", tokenizer, method)
     config = classifier_config(method)
+    config["seed"] = seed
     if unixcoder:
         config.update(model_id=BACKBONES["unixcoder"][0], model_revision=BACKBONES["unixcoder"][1],
                       quotas=QUOTAS if method == "uniform4" else context.BASE_QUOTAS,
@@ -556,6 +563,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("methods", choices=(*METHODS, *UNIX_METHODS), nargs="*")
     parser.add_argument("--smoke-only", action="store_true")
+    parser.add_argument("--seed", type=int, choices=SEEDS, default=SEED)
     args = parser.parse_args()
     if not args.methods and not args.smoke_only:
         parser.error("choose one or more ablations or --smoke-only")
@@ -583,7 +591,7 @@ if __name__ == "__main__":
         for method in args.methods:
             backbone, source = ("unixcoder", UNIX_BASE) if method in UNIX_METHODS else ("codebert", BASE)
             tokenizer = load_tokenizer(backbone, source)
-            run(method, tokenizer)
+            run(method, tokenizer, seed=args.seed)
         if any(method in repair.METHODS for method in args.methods) and all(
                 (ORACLE_RESULTS / method / "metrics.json").is_file() for method in repair.METHODS):
             write_json(ORACLE_RESULTS / "edit_retention.json", repair.repair_retention(ORACLE_RESULTS, UNIX_RESULTS))

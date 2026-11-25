@@ -5,9 +5,8 @@ import numpy as np
 import torch
 
 from coarse_encoding import CoarseClassifier, block_mass, repair_block_mass
-from coarse_retrieval import Candidates, block_ends, lengths, part_overlap, uncovered
-from coarse_to_fine import changed_blocks, ranking_loss
-from context_selection import contains, merge, occupied
+from coarse_retrieval import block_ends, lengths, part_overlap, retrieve, uncovered
+from context_selection import contains, merge, occupied, source_parser
 from repair_oracle import EDIT_TYPES, GAP_TYPES
 
 
@@ -34,114 +33,76 @@ class BlockEncodingTest(unittest.TestCase):
 
 
 class RetrievalTest(unittest.TestCase):
-    def test_completion_and_link_precedence_with_exact_marginal_cost(self):
-        n = 1600
-        ends = block_ends(n,[],[],64,False)
-        unit = (113,137)
-        links = {("condition",unit,(551,578)),("declaration",unit,(180,194)),
-                 ("assignment",unit,(800,1300)),("assignment",unit,(270,281))}
-        plan = Candidates(ends,[unit],links,contextual=True)
-        self.assertTrue(contains(unit,plan.bundle[1]))
-        self.assertTrue(contains((551,578),plan.bundle[1]))
-        self.assertTrue(contains((180,194),plan.bundle[1]))
-        self.assertTrue(contains((270,281),plan.bundle[1]))
-        self.assertEqual(plan.omitted["assignment"],2)
-        for i in (1,2):
-            self.assertAlmostEqual(sum(w for a,_,w in plan.edges if a==i),1.0)
-        rng = np.random.default_rng(42)
-        for _ in range(50):
-            starts = rng.integers(0,n-60,10)
-            selected = merge([(a,a+int(width)) for a,width in zip(starts,rng.integers(1,60,10))])
-            actual = [merge([*selected,*bundle]) for bundle in plan.bundle]
-            for separators,count in ((False,lengths),(True,occupied)):
-                expected = [count(spans)-count(selected) for spans in actual]
-                np.testing.assert_array_equal(plan.marginal(selected,separators=separators),expected)
+    def test_zero_budget_matches_historical_partial_block_and_short_passthrough(self):
+        source = SimpleNamespace(ids=range(1600))
+        ends = block_ends(len(source.ids),[],[],32,False)
+        scores = -np.arange(len(ends),dtype=float)
+        scores[-1] = 1.
+        pick = retrieve(scores,source,ends,0)
+        self.assertEqual(pick.spans,[(0,477),(1568,1600)])
+        self.assertEqual(pick.centers,[(0,448),(1568,1600)])
+        self.assertEqual(pick.fill,[(448,477)])
+        self.assertEqual(pick.context,[])
+        short = SimpleNamespace(ids=range(45))
+        self.assertEqual(retrieve(scores[:2],short,[32,45],128).spans,[(0,45)])
 
-    def test_budget_and_bounded_matching_for_realistic_lengths(self):
+    def test_context_keeps_centers_and_charges_shared_declaration_once(self):
+        declaration = "int value = 1;"
+        calls = "use(value);\n"*100
+        code = f"void f() {{\n{declaration}\n{calls}}}\n"
+        source = SimpleNamespace(code=code,ids=range(len(code)),keep=list(range(len(code))),
+                                 offsets=[(i,i+1) for i in range(len(code))])
+        ends = block_ends(len(code),[],[],32,False)
+        scores = np.zeros(len(ends))
+        scores[10:14] = [3,4,2,1]
+        pick = retrieve(scores,source,ends,64,source_parser())
+        start = code.index(declaration)
+        statement = (start,start+len(declaration))
+        self.assertTrue(contains(statement,pick.spans))
+        self.assertTrue(contains((320,448),pick.centers))
+        # The declaration overlaps the first center in this initial ranking.
+        scores[:8] = -1
+        pick = retrieve(scores,source,ends,64,source_parser())
+        self.assertTrue(contains(statement,pick.context))
+        self.assertEqual(sum(b-a for a,b in pick.context if (a,b)==statement),len(declaration))
+        self.assertFalse(uncovered(pick.centers,pick.spans))
+        self.assertEqual(occupied(pick.spans),510)
+        self.assertEqual(lengths(pick.centers)+lengths(pick.context)+lengths(pick.fill),lengths(pick.spans))
+
+    def test_exact_budget_for_variable_blocks_and_extreme_length(self):
         rng = np.random.default_rng(42)
-        for n in (13,510,511,543,590,1024,278200):
-            source = SimpleNamespace(ids=range(n),boundaries=[*range(0,n,26),n])
-            ends = block_ends(n,[],[],64,False)
-            plan = Candidates(ends,[],[],contextual=False)
+        for n in (511,543,590,1024,278200):
+            source = SimpleNamespace(ids=range(n))
+            ends = block_ends(n,[],list(range(0,n,29)),32,True)
             scores = rng.random(len(ends))
-            selected = plan.retrieve(scores,source)
-            self.assertEqual(list(selected.spans),merge(selected.spans))
-            self.assertEqual(occupied(selected.spans),min(n,510))
-            self.assertTrue(all(0<=a<b<=n for a,b in selected.spans))
-            self.assertEqual(selected,plan.retrieve(scores,source))
-            if n<=510:
-                self.assertEqual(selected.spans,((0,n),))
-            replacements = plan.alternatives(selected,scores,source,rng)
-            self.assertLessEqual(len(replacements),2)
-            if n==278200:
-                self.assertTrue(replacements)
-            for other,removed,added in replacements:
-                self.assertEqual(occupied(selected.spans),occupied(other.spans))
-                self.assertEqual(lengths(selected.spans),lengths(other.spans))
-                self.assertEqual(removed,uncovered(selected.spans,other.spans))
-                self.assertEqual(added,uncovered(other.spans,selected.spans))
-                self.assertEqual(len(set(selected.centers)-set(other.centers)),1)
-                self.assertEqual(len(set(other.centers)-set(selected.centers)),1)
-                for center in set(selected.centers)&set(other.centers):
-                    self.assertTrue(all(contains(span,other.spans) for span in plan.bundle[center]))
+            pick = retrieve(scores,source,ends,0)
+            self.assertEqual(pick.spans,merge(pick.spans))
+            self.assertEqual(occupied(pick.spans),510)
+            self.assertTrue(all(0<=a<b<=n for a,b in pick.spans))
+            self.assertFalse(uncovered(pick.centers,pick.spans))
 
 
 class IndexerTest(unittest.TestCase):
-    def setUp(self):
+    def test_task_and_repair_gradients_with_padding_invariance(self):
         torch.manual_seed(42)
-        self.batch = dict(blocks=torch.randn(2,4,8),positions=torch.arange(4)[None,:].expand(2,-1)*64.,
-                          valid=torch.tensor([[True,True,True,True],[True,True,False,False]]),
-                          labels=torch.tensor([1,0]),repair=torch.tensor([[0.,.6,.4,0.],[0.,0.,0.,0.]]))
-
-    def test_task_gradient_and_source_positions_without_padding_signal(self):
-        model = CoarseClassifier(8,"task").eval()
-        report = model(self.batch,details=True)
-        p = report["importance"]
+        model = CoarseClassifier(8,"joint",1.).eval()
+        blocks = torch.randn(2,4,8)
+        valid = torch.tensor([[True,True,True,True],[True,True,False,False]])
+        batch = dict(blocks=blocks,valid=valid,labels=torch.tensor([1,0]),
+                     repair=torch.tensor([[0.,.6,.4,0.],[0.,0.,0.,0.]]))
+        output = model(batch,details=True)
+        p = output["importance"]
         torch.testing.assert_close(p.sum(-1),torch.ones(2))
-        torch.testing.assert_close(p[1,2:],torch.zeros(2),atol=0,rtol=0)
-        altered = self.batch["blocks"].clone()
-        altered[1,2:] *= 10000
-        padding = model(dict(self.batch,blocks=altered),details=True)
-        torch.testing.assert_close(p,padding["importance"])
-        reordered = model(dict(self.batch,positions=self.batch["positions"].flip(1)),details=True)
-        self.assertFalse(torch.allclose(p,reordered["importance"]))
-        report["loss"].backward()
-        self.assertGreater(model.indexer.query.weight.grad.norm().item(),0.)
-        self.assertGreater(model.encoder.broadcast.in_proj_weight.grad.norm().item(),0.)
+        torch.testing.assert_close(p[~valid],torch.zeros_like(p[~valid]))
+        for key in ("train_bce","train_repair_kl"):
+            grads = torch.autograd.grad(output["loss_components"][key],model.indexer.parameters(),retain_graph=True)
+            self.assertTrue(all(torch.isfinite(g).all() and g.norm()>0 for g in grads))
+        changed = blocks.clone()
+        changed[~valid] = 42.
+        other = model(dict(blocks=changed,valid=valid),details=True)
+        for key in ("importance","coarse","weighted","global_state"):
+            torch.testing.assert_close(other[key],output[key])
 
-    def test_auxiliary_logits_require_indexed_local_evidence(self):
-        model = CoarseClassifier(8,"task").eval()
-        torch.nn.init.zeros_(model.indexer.query.weight)
-        p = model(self.batch,details=True)
-        # With uniform fixed scores, changing only the global reader cannot affect the auxiliary logits.
-        with torch.no_grad():
-            model.encoder.latents.add_(torch.randn_like(model.encoder.latents))
-        q = model(self.batch,details=True)
-        self.assertFalse(torch.allclose(p["g"],q["g"]))
-        torch.testing.assert_close(p["logits"],q["logits"])
 
-    def test_repair_only_detaches_task_loss_and_ignores_empty_target_in_kl(self):
-        model = CoarseClassifier(8,"repair",1.)
-        report = model(self.batch,details=True)
-        bce = report["loss_components"]["train_bce"]
-        kl = report["loss_components"]["train_repair_kl"]
-        q = self.batch["repair"][0,1:3]
-        p = report["importance"][0,1:3]
-        torch.testing.assert_close(kl,(q*(q.log()-p.log())).sum())
-        params = tuple(model.indexer.parameters())
-        self.assertEqual(torch.autograd.grad(bce,params,allow_unused=True,retain_graph=True),(None,None))
-        report["loss"].backward()
-        self.assertGreater(model.indexer.key.weight.grad.norm().item(),0.)
-        self.assertGreater(model.head[-1].weight.grad.norm().item(),0.)
-
-    def test_ranking_updates_all_changed_blocks_using_actual_loss_direction(self):
-        ids,sign = changed_blocks([30,60,90,120],[(20,40)],[(70,95)])
-        self.assertEqual(ids,[0,1,2,3])
-        torch.testing.assert_close(torch.tensor(sign),torch.tensor([-.5,-.5,.8,.2]))
-        p = torch.tensor([[.2,.3,.4,.1]],requires_grad=True)
-        loss = ranking_loss(p,[9],{9:[(.4,ids,sign)]})
-        expected = .4*torch.nn.functional.softplus((p.log()*torch.tensor(sign)).sum())
-        torch.testing.assert_close(loss,expected)
-        loss.backward()
-        self.assertTrue((p.grad[0,:2]<0).all())
-        self.assertTrue((p.grad[0,2:]>0).all())
+if __name__ == "__main__":
+    unittest.main()
