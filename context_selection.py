@@ -175,7 +175,7 @@ def control_header(node):
     return None
 
 
-def related_statements(code, offsets, keep, base, parser):
+def related_statements(code, offsets, keep, base, parser, *, units=None):
     """Find syntax links from retained regions, or from all statements when base is None."""
     source = code.encode("utf-8")
     root = parser.parse(source).root_node
@@ -203,6 +203,8 @@ def related_statements(code, offsets, keep, base, parser):
             anchor = None
             if header:
                 span = bpe(*header[0])
+                if units is not None and span[0] < span[1]:
+                    units.add(span)
                 if base is not None and intersects(span, base):
                     anchor = (span, scope, None, {})
                     anchors.append(anchor)
@@ -210,6 +212,8 @@ def related_statements(code, offsets, keep, base, parser):
             anchor = None
             if not node.has_error:
                 span = bpe(node.start_byte, node.end_byte)
+                if units is not None and span[0] < span[1]:
+                    units.add(span)
                 if span[0] < span[1] and (base is None or intersects(span, base)):
                     anchor = (span, scope, node, {})
                     anchors.append(anchor)

@@ -379,7 +379,8 @@ def measure_data(split, tokenizer, method, *, analyze=False):
     return data, perf_counter()-start
 
 
-def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BATCH_SIZE, bf16=False, collator=collate):
+def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BATCH_SIZE, bf16=False, collator=collate,
+                   epochs=EPOCHS, stop_after=None, before_epoch=None):
     if micro_batch <= 0 or BATCH_SIZE % micro_batch:
         raise ValueError("Micro-batch must divide the effective batch size")
     weights.mkdir(parents=True, exist_ok=True)
@@ -387,7 +388,7 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
     valid_loader = DataLoader(valid, batch_size=micro_batch, collate_fn=collator)
     optimizer = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
     per_epoch = math.ceil(len(train) / BATCH_SIZE)
-    steps = per_epoch * EPOCHS
+    steps = per_epoch * epochs
     schedule = get_linear_schedule_with_warmup(optimizer, steps*WARMUP_FRACTION, steps)
     write_json(root / "config.json", config)
     history = []
@@ -395,7 +396,9 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
         history, rng = load_training_state(weights, model, optimizer, config, scheduler=schedule)
         restore_rng(rng)
     best = max((row["validation"]["mcc"] for row in history), default=-math.inf)
-    for epoch in range(len(history)+1, EPOCHS+1):
+    for epoch in range(len(history)+1, (stop_after or epochs)+1):
+        if before_epoch is not None:
+            before_epoch(model, epoch)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         start = perf_counter()

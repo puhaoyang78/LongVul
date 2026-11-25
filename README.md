@@ -4,40 +4,130 @@ PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配�
 
 ## Repair-Guided Coarse-to-Fine Encoding
 
-本实验在完整函数的多窗口编码和单次精细编码之间执行检索。QSA 和 DSA 提供了从轻量 Query–Key 评分到精细选择的思路，NSA 和 DeepSeek-V4 的 CSA/HCA 将粗粒度汇聚与细粒度读取分开，MoBA 对连续块打分并进行 Top-K 路由。这里将这些设计用于函数级选择，沿用 UniXcoder 本身的注意力。[Qwen QSA 技术报告](https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf) · [DeepSeek DSA](https://arxiv.org/abs/2512.02556) · [DeepSeek NSA](https://arxiv.org/abs/2502.11089) · [DeepSeek-V4 CSA/HCA](https://arxiv.org/abs/2606.19348) · [Kimi MoBA](https://arxiv.org/abs/2502.13189)
+LongVul 先编码完整函数，再在 512 个位置内精细编码所检索的源码。跨块交互借鉴 HAT、Longformer 和 Perceiver IO，索引和分类反馈分别借鉴 QSA、DSA 和 CogLTX。两个 UniXcoder 分支均沿用预训练模型的注意力实现。[HAT](https://arxiv.org/abs/2210.05529) · [Longformer](https://arxiv.org/abs/2004.05150) · [Perceiver IO](https://arxiv.org/abs/2107.14795) · [Qwen QSA](https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf) · [DeepSeek DSA](https://arxiv.org/abs/2512.02556) · [CogLTX](https://proceedings.neurips.cc/paper/2020/hash/96671501524948bc3937b4b30d0e57b9-Abstract.html)
 
-1. **全局编码。** 采用历史 Simple 缩进压缩和原始 BPE 映射。冻结 UniXcoder，以 BF16 SDPA 编码覆盖完整源码的非重叠窗口，沿用现有行单元切窗。沿源码每 32 个正文 BPE 汇聚末层隐藏状态，跨窗分段先求和再除以真实 BPE 数。排除 CLS、SEP 和 padding，尾块按实际宽度处理。复用 FP16 块缓存。对有效块取均值和最大值，拼成全局表示 (g)。
-2. **上下文索引。** 从 (g) 投影出 4 个 128 维 Query，共用一个 Key 投影。按头对有效块计算缩放点积和 Softmax，头间取平均得到 (p)。加权块均值 (z_g) 与 (g) 一起进入粗分类头。Global-only 在相同容量的分类头中使用未加权均值。索引器从 Global-only 的粗分类头热启动。Train 的真实修改和纯插入、删除空侧的邻行按去重后的 BPE 数构造 KL 目标分布。没有有效修复目标的函数仍参与 BCE。Repair-only 仅由 KL 更新 Query、Key，粗分类头仍用 BCE。联合组比较 `λ_R ∈ {0.1, 0.5, 1.0}`，取最佳完整 Valid MCC，并列取较小权重。
-3. **精细编码。** 固定索引器和粗分支，按 (p) 降序读取连续块，按源码顺序合并相邻块并精确计入内部 SEP。剩余预算可取最高可容纳块的前缀或后缀。能完整放入 510 正文位置的函数保留全文。独立的 FP32 Eager UniXcoder 在 512 位置内编码所选代码，其 CLS 加上粗表示的可学习线性投影，再进入分类头。该投影从零初始化，粗分支通过缓存冻结，精细 BCE 只更新精细分支与融合头。
+1. **分块与全局编码。** 保留历史 Simple 缩进压缩及原始 BPE 位置。冻结的 UniXcoder 以 BF16 SDPA 编码覆盖全函数的非重叠窗口。跨窗口的块按实际 BPE 求均值，排除特殊符号和 padding。六种分块共享同一次编码。固定块和语句对齐块分别比较 32、64、128 BPE，按 Valid 的 MCC、修改 BPE 保留率、语句完整性及片段数选定。块加上原始 BPE 位置的正弦表示，通过 8 个全局潜在向量双向交互。CLS 汇总得到全局表示 `g`，每个块同时得到带跨窗口信息的表示。
+2. **索引与检索。** 四个 128 维 Query 从 `g` 生成，Key 读取跨块特征及语法关联特征。索引分数加权的是跨块交互前的局部表示，得到辅助分类的唯一输入 `z_g`。历史双侧修改 BPE 和空侧邻行构造 KL 目标，梯度量级在固定 Train 批次上测量，结合 Valid MCC 固定修复权重。检索把中心、补全语句、条件头、声明与先前赋值组成候选，按实际新增 BPE 和 SEP 成本选择并去重。Tree-sitter 局部解析结果和带作用域的词法匹配用于估计语法关联。每个块皆可作为中心，超预算关系单独计数。能完整编码的短函数保留全部 Simple 正文。
+3. **精细编码与反馈。** 独立的 FP32 Eager UniXcoder 编码按源码顺序打包的片段，融合 `g`、`z_g` 和精细 CLS。先预热全局模型和索引器，再训练 8 轮精细分支。第 9 和第 13 轮前，在 Train 的当前布局中替换一个候选，固定其余已选候选，并按相同规则重新填充邻接代码。从边界和探索候选中各保留至多一个正文 BPE 数、SEP 数均相同的替换布局。固定分类器和全局表示，用实际 BCE 变化监督所有变化块的排序。随后重新检索并联合训练，精细训练总计 16 轮。最终分类 BCE 只通过连续的 `z_g` 向索引器传递梯度。离散选择由独立的排序损失优化。
 
-| 对照 | 粗分支 | 精细编码输入 |
+| 对照 | 索引监督 | 精细编码输入 |
 | --- | --- | --- |
-| Uniform Sampling | — | 复用历史 UniXcoder 结果 |
-| Global-only | Mean/Max | — |
-| Global + Uniform | 固定的联合索引器及粗分支 | 历史四区居中填充 |
-| Global + Task Indexer | BCE 训练索引器 | 任务分数检索 |
-| Global + Repair Indexer | KL 训练索引器 | 修复分数检索 |
-| Global + Task & Repair Indexer | BCE + KL 训练索引器 | 联合分数检索 |
+| Block & Context | 保留历史全局旁路和历史修复权重 | 独立块 |
+| Balanced Indexer | 移除辅助旁路，使用校准权重 | 独立块 |
+| Context Retrieval | 校准权重，Key 加入关联上下文 | 中心与关联上下文 |
+| Full LongVul | 同 Context Retrieval，加入分类排序反馈 | 中心与关联上下文 |
+| Global + Uniform | 与 Full 匹配的架构、初始索引器和精细训练轮数 | 历史居中均匀采样 |
 
-Global + Uniform 和完整方法从同一精细编码初始化分别训练。另将完整方法的同一个精细检查点、融合头与粗分支用于均匀输入，直接测量只替换布局的影响。每个对照共用原始划分、16 轮、batch 8、LOSVERAdamW、学习率 2e-5、10% 预热与固定 (p>0.5)。分类阶段按 Valid MCC 选检查点，并列取最早轮。Test 按函数读取源码，预测写入后才使用修复配对计算定位、保留和配对指标。配对长度分组取两侧原始 BPE 的最大值，PR-AUC 使用 average precision。
+Context Retrieval 与 Full 从相同的第 8 轮模型、优化器和调度状态继续训练。另用 Full 的同一检查点及每个函数的同一组 `g`、`z_g` 将精细输入替换成均匀布局，直接测量检索差异。各组沿用 batch 8、LOSVERAdamW、学习率 2e-5、10% 预热和统一的 Valid MCC 选模。补充种子复跑 Context Retrieval、Full 和 Global + Uniform。历史 Diff 用于 Train 监督、Valid 诊断和策略选择，以及保存预测后的 Test 诊断。Test 编码和检索仅访问当前函数源码。
 
-512 位置仅约束精细编码。结果记录源代码预处理、全局编码和汇聚、粗分类及索引、检索打包、精细编码各阶段耗时，以及两分支的窗口数、批量前向次数与 padding 开销。各组共用实测全局编码开销。完整方法另在 Test 冷跑一次，计入完整流程并核对缓存路径的输入和概率。
+512 是精细分支的位置上限。端到端成本还包含完整函数的多窗口编码。程序按阶段记录分词、语法解析、块汇聚、跨块交互、索引、检索与精细编码，分别统计真实编码位置、padding、批量前向和排序反馈训练成本。
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4 TOKENIZERS_PARALLELISM=true
 PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
-"$PYTHON" coarse_to_fine.py --stage smoke
-"$PYTHON" coarse_to_fine.py --stage coarse --seed 42
-"$PYTHON" coarse_to_fine.py --stage fine --seed 42
-"$PYTHON" coarse_to_fine.py --stage report --seed 42
-"$PYTHON" coarse_to_fine.py --stage all --seed 1234 --methods uniform joint --fixed-lambda 1.0
-"$PYTHON" coarse_to_fine.py --stage all --seed 123456 --methods uniform joint --fixed-lambda 1.0
+"$PYTHON" coarse_to_fine.py --phase smoke
+"$PYTHON" coarse_to_fine.py --phase all --seed 42
+"$PYTHON" coarse_to_fine.py --phase all --seed 1234
+"$PYTHON" coarse_to_fine.py --phase all --seed 123456
 "$PYTHON" -m unittest discover -s tests -v
 ```
 
-共享块缓存和最佳模型位于服务器 `checkpoints/coarse_to_fine_512/`。训练配置、逐轮指标、分层结果及逐样本预测读自 `results/coarse_to_fine_512/`。
+共享块缓存、最优权重与续训状态保存在服务器 `checkpoints/longvul_adaptive_512/`。公开结果中含训练配置、所有轮次、分层指标、反馈诊断及逐样本预测。[当前实验目录](results/longvul_adaptive_512/)
 
-### 种子 42 的 PrimeVul_original 结果
+### Valid 分块选择
+
+| 布局 | 粗分类 MCC | 长函数修改 BPE 保留 | 长函数已触及语句的完整率 | 长函数平均片段数 |
+| --- | ---: | ---: | ---: | ---: |
+| 固定 32 | 0.0409 | 39.76% | 77.34% | 7.13 |
+| 语句对齐 32 | 0.0409 | 39.71% | 96.10% | 6.88 |
+| 固定 64 | 0.0412 | 39.21% | 89.92% | 4.21 |
+| 语句对齐 64 | 0.0356 | 38.97% | 98.04% | 4.15 |
+| 固定 128 | 0.0356 | 37.05% | 95.84% | 2.86 |
+| 语句对齐 128 | 0.0569 | 36.91% | 97.83% | 2.59 |
+
+各布局共享冻结编码，分别做 4 轮全局预热和 2 轮任务索引探测。按 MCC 名次乘二，加其余三项名次的规则，选定语句对齐 128 BPE。该布局的修改保留率在六组中最低，较高的 MCC、语句完整性与较少的片段使其综合排名第一。[完整 Valid 选择记录](results/longvul_adaptive_512/seed42/layout_trials.json)
+
+### 索引器监督诊断
+
+在固定的 64 个 Train 批次上，初始化的 KL/BCE 梯度范数比中位数为 14.41。以 0.125、0.5 作为目标梯度比例得到两个固定权重。训练后两者的加权比例均小于 1，按 Valid MCC 选定 0.008674。保留全局旁路及历史权重的 Block & Context 对照中，该比例为 22.22。
+
+| 修复权重 | Valid MCC | 加权 KL/BCE 梯度范数比 | 梯度余弦中位数 |
+| ---: | ---: | ---: | ---: |
+| 0.008674 | 0.0516 | 0.185 | 0.048 |
+| 0.034695 | 0.0463 | 0.713 | 0.095 |
+
+| 索引器 | 长函数真实修改 AP | Recall@15 | 长函数修改 BPE 保留 | 整体粗分类 MCC |
+| --- | ---: | ---: | ---: | ---: |
+| Task-only | 0.2394 | 81.95% | 38.61% | 0.0266 |
+| Repair-only | 0.2684 | 84.06% | 43.88% | 0.0231 |
+| Task + Repair | 0.2539 | 83.08% | 41.40% | 0.0463 |
+
+种子 42 的 732 个长函数中，联合与 Repair-only 的布局有 191 个完全相同，所选 BPE 位置的平均 Jaccard 为 0.576。Repair-only 的修改保留率最高，联合索引器在粗分类中的 MCC 最高。[梯度校准](results/longvul_adaptive_512/seed42/index_policy.json) · [索引器 Test 诊断](results/longvul_adaptive_512/seed42/index_ablation_test.json)
+
+真实 GPU 检查覆盖 36 个 Train 函数，最长函数有 232,766 个原始 BPE。其 218,430 个 Simple BPE 全部参与 433 窗编码和 1,712 块汇聚，精细预算为 512。固定原填充做精确等预算替换时，34 个待选段函数中只有 1 个可比较。按相同规则重新填充后，32 个函数产生了 39 个可比较布局。最终 BCE 在 Query/Key 上的梯度范数为 0.000484，排序更新只改动索引器，下一步联合训练重新生成布局。[GPU smoke](results/longvul_adaptive_512/smoke.json)
+
+### 种子 42 的 PrimeVul_original Test 结果
+
+各单元格依次列出 MCC、F1、ROC-AUC 和 PR-AUC。更细的长度分组和配对指标见完整结果。
+
+| 方法 | 最佳轮次 | 整体 | >510 BPE | ≥2041 BPE |
+| --- | ---: | --- | --- | --- |
+| Uniform Sampling（历史） | 7 | 0.0880 / 0.5043 / 0.5599 / 0.5644 | 0.0465 / 0.4441 / 0.5313 / 0.5260 | −0.0376 / 0.4126 / 0.4729 / 0.4717 |
+| Coarse-to-Fine（历史） | 15 | 0.1095 / 0.5159 / 0.5778 / 0.5614 | 0.0998 / 0.4962 / 0.5745 / 0.5503 | 0.0594 / 0.4711 / 0.5550 / 0.5459 |
+| Block & Context | 8 | 0.0887 / 0.5361 / 0.5671 / 0.5671 | 0.0915 / 0.4954 / 0.5648 / 0.5477 | 0.0347 / 0.4455 / 0.5060 / 0.5147 |
+| Balanced Indexer | 6 | 0.0864 / 0.4131 / 0.5503 / 0.5539 | 0.0549 / 0.2816 / 0.5280 / 0.5215 | −0.0446 / 0.2086 / 0.4971 / 0.4854 |
+| Context Retrieval | 8 | 0.0852 / 0.5991 / 0.5715 / 0.5766 | 0.0624 / 0.5714 / 0.5447 / 0.5405 | 0.0141 / 0.5532 / 0.5109 / 0.5220 |
+| Full LongVul | 8 | 0.0852 / 0.5991 / 0.5715 / 0.5766 | 0.0624 / 0.5714 / 0.5447 / 0.5405 | 0.0141 / 0.5532 / 0.5109 / 0.5220 |
+| Global + Uniform | 6 | 0.0782 / 0.4806 / 0.5462 / 0.5501 | 0.0376 / 0.3853 / 0.5255 / 0.5180 | 0.0409 / 0.3598 / 0.5021 / 0.5067 |
+| 同 Full 检查点换用均匀精细输入 | 8 | 0.1038 / 0.6211 / 0.5689 / 0.5701 | 0.0915 / 0.6077 / 0.5418 / 0.5267 | 0.0213 / 0.5935 / 0.5107 / 0.5054 |
+
+| 方法 | 长函数真实修改 BPE 保留 | 插入空侧 | 删除空侧 | 长函数平均片段数 | 长函数锚点语句完整率 | 精细输入碰撞 / 564 对 | Pairwise Correctness |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Block & Context | 46.53% | 39.83% | 39.06% | 2.39 | 99.94% | 40 | 12.59% |
+| Balanced Indexer | 43.24% | 41.95% | 36.39% | 2.47 | 99.92% | 34 | 10.46% |
+| Context Retrieval / Full LongVul | 41.40% | 46.51% | 48.22% | 3.81 | 99.96% | 45 | 13.48% |
+| Global + Uniform | 40.36% | 37.25% | 40.65% | 6.95 | 95.66% | 20 | 10.64% |
+
+在 468 个可完全解析、需要选段的长函数中，Context Retrieval 和 Balanced Indexer 同时完整保留的锚点对应 14,097 个可容纳的语法关联。Context Retrieval 保留 98.94%，Balanced Indexer 保留 64.01%。在 ≥2041 BPE 组，相同比例为 98.40% 和 46.37%。从独立块到联合检索，长函数的平均片段数增加，真实修改 BPE 保留率降低，空侧邻近区域保留率提高。Context Retrieval 的整体 MCC 比 Balanced Indexer 低 0.0011，长组高 0.0075，≥2041 BPE 组高 0.0586。[完整长度分组与同锚点对照](results/longvul_adaptive_512/seed42/summary.json)
+
+相对历史 Coarse-to-Fine，Full 的真实修改 BPE 保留率在长组从 49.19% 降至 41.40%，在 ≥2041 BPE 组从 22.77% 降至 14.45%。同检查点换用均匀布局时，长组的真阳性从 230 增至 261，假阳性从 215 增至 238。其固定阈值 MCC 提高，ROC-AUC 由 0.5447 降至 0.5418，PR-AUC 由 0.5405 降至 0.5267。[联合检索和同检查点混淆矩阵](results/longvul_adaptive_512/seed42/full/metrics.json)
+
+### 种子 42 的反馈与计算开销
+
+| 反馈发生在 | 匹配函数 / 需选段函数 | 比较数 | Valid 长函数布局变化 | 这一步前后 Valid MCC | 辅助 BCE 梯度范数 | 最终 BCE 梯度范数 | 加权 KL 梯度范数 | 排序梯度范数 |
+| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 第 9 轮前 | 4,206 / 5,355 | 4,731 | 230 / 671 | 0.1023 → 0.1006 | 0.07189 | 0.01147 | 0.01225 | 0.06301 |
+| 第 13 轮前 | 4,322 / 5,355 | 4,864 | 231 / 671 | 0.0712 → 0.0748 | 0.06705 | 0.00812 | 0.01878 | 0.79147 |
+
+梯度列是 Query/Key 上分量范数的中位数。两次排序梯度与最终 BCE 梯度的余弦中位数分别为 −0.142、−0.077。第二次的分类损失变化绝对值中位数从 0.029 增至 0.188，排序梯度也明显增大。Full 和 Context Retrieval 都选中第 8 轮的共享预热模型，两个反馈阶段各自的训练与验证记录仍完整保留。[第 9 轮前](results/longvul_adaptive_512/seed42/full/feedback/epoch9.json) · [第 13 轮前](results/longvul_adaptive_512/seed42/full/feedback/epoch13.json)
+
+固定 Full 所选检查点和 `g`、`z_g`，换用均匀精细输入后，整体 MCC 从 0.0852 升至 0.1038，长函数 MCC 从 0.0624 升至 0.0915。对于两种布局均完整保留的锚点，在可完全解析且需要选段的长函数中，联合检索保留了 9,159/9,303 个预算内关联，均匀采样保留 6,000/9,303 个，分别为 98.45% 和 64.50%。≥2041 BPE 的对应比例为 96.30% 和 24.80%。联合检索和均匀采样分别有 45、20 个精细输入碰撞对，计入粗分支后，两种布局的完整输入碰撞数均为零。语法关联共保留率提高，分类 MCC 仍以均匀布局较高。[同检查点对照与共保留诊断](results/longvul_adaptive_512/seed42/full/metrics.json)
+
+Full 的 16 轮精细优化耗时 41.73 分钟，两轮反馈数据生成与排序耗时 2.99 分钟。精细训练峰值 6.66 GiB，反馈含梯度诊断峰值 8.36 GiB。两个 PLM 均常驻时，1,128 个 Test 函数从读入源码到输出概率共耗时 **42.85 秒**，峰值 1.12 GiB。主要用时为分词及原始映射 8.52 秒、语法解析 17.09 秒、候选构造 2.17 秒、全局编码与汇聚 5.50 秒、跨块交互 0.36 秒、索引 0.13 秒、检索 1.09 秒及精细编码与打包 7.17 秒。全流程共 5,560 个编码序列、326 次批量前向、2,432,962 个实际位置和 2,845,256 个含 padding 的位置。冷跑与缓存路径的布局和概率完全一致。[成本与预测记录](results/longvul_adaptive_512/seed42/full/metrics.json)
+
+六种布局共享的冻结编码和汇聚在 Train、Valid 分别耗时 52.26、5.67 秒。确定分块后，种子 42 的四轮全局模型优化用时 71.78 秒，所选六轮联合索引器优化用时 135.17 秒。这些阶段的成本独立于精细优化的计时。[全局模型](results/longvul_adaptive_512/seed42/coarse/statement128/global/fit.json) · [联合索引器](results/longvul_adaptive_512/seed42/coarse/statement128/joint_0.125/fit.json)
+
+### 跨种子结果
+
+各单元格依次列出整体、>510 BPE、≥2041 BPE 的 Test MCC。
+
+| 种子 | Context Retrieval | Full LongVul | 独立训练的 Global + Uniform | 同 Full 检查点换用均匀精细输入 |
+| --- | --- | --- | --- | --- |
+| 42 | 0.0852 / 0.0624 / 0.0141 | 0.0852 / 0.0624 / 0.0141 | 0.0782 / 0.0376 / 0.0409 | 0.1038 / 0.0915 / 0.0213 |
+| 1234 | 0.0816 / 0.0380 / 0.0626 | 0.0747 / 0.0490 / 0.0217 | 0.1012 / 0.0494 / 0.0018 | 0.1027 / 0.0932 / 0.0371 |
+| 123456 | 0.0610 / 0.0226 / −0.0685 | 0.0618 / 0.0027 / −0.0597 | 0.1071 / 0.0752 / 0.0335 | 0.0995 / 0.0719 / 0.0679 |
+
+Full 相对独立训练的 Global + Uniform，整体、长组和 ≥2041 BPE 组的平均 MCC 差值分别为 −0.0215、−0.0160 和 −0.0334。三个长度口径中，每个口径只有一个种子提升。[种子 42 全指标](results/longvul_adaptive_512/seed42/summary.json) · [种子 1234 全指标](results/longvul_adaptive_512/seed1234/summary.json) · [种子 123456 全指标](results/longvul_adaptive_512/seed123456/summary.json)
+
+固定检查点换用均匀布局后，三个种子的整体、长组和 ≥2041 BPE 组 MCC 都上升，平均差值分别为 0.0281、0.0475 和 0.0501。同期联合检索在干净解析长函数的同锚点语法共保留率为 98.45%–98.56%，均匀布局为 63.90%–65.02%。
+
+Full 的三个最佳轮次分别为第 8、10、8 轮。种子 42 和 123456 的验证选模都回到反馈前的共享检查点。种子 1234 选中了第一次反馈后的检查点，相比同种子的 Context Retrieval，长组 MCC 增加 0.0110，整体 MCC 下降 0.0069，≥2041 BPE 组下降 0.0410。第二轮反馈的排序梯度与最终 BCE 梯度在三个种子的诊断批次上均呈负余弦，范围为 −0.165 至 −0.077。[种子 42](results/longvul_adaptive_512/seed42/full/metrics.json) · [种子 1234](results/longvul_adaptive_512/seed1234/full/metrics.json) · [种子 123456](results/longvul_adaptive_512/seed123456/full/metrics.json)
+
+### 历史 Coarse-to-Fine 对照
+
+此前方法对固定 32 BPE 块取 Mean/Max，辅助分类头直接使用全局统计量。精细训练期间粗分支冻结，按索引分数独立选择块。下表保留历史评估。旧命令及实现见对应 Git 提交。[历史实现](https://github.com/puhaoyang78/LongVul/tree/60688d25cd334e4202cefaa373a310341bc7ec16) · [历史实验目录](results/coarse_to_fine_512/)
+
+#### 种子 42 的 PrimeVul_original 结果
 
 三个联合索引器候选的粗分类 Valid MCC 分别为 0.0876、0.0855、0.0879，选用权重 1.0 和第 6 轮的索引器。下游四组训练完整进行，每组按自己的 Valid MCC 选模。
 
@@ -62,7 +152,7 @@ PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
 
 Global + Uniform 报告的是共享索引器本身的定位指标，精细分支仍按均匀布局输入。联合与 Repair-only 在 732 个长函数中的 635 个选中了完全相同的源码位置，精细 BPE 集合的平均 Jaccard 为 0.991。两者长组检测 MCC 分别为 0.0998 和 0.0315，定位质量接近时仍可能得到不同的分类表现。全局窗口输入在 564 个 Test 对中均不同，精细输入的碰撞数单独统计。
 
-### 跨种子复核
+#### 跨种子复核
 
 种子 1234 和 123456 固定种子 42 在 Valid 选出的修复权重 1.0，重新训练全局分类头、联合索引器和两个匹配的精细分支。三组共用冻结 UniXcoder 提取的块缓存。
 
@@ -76,7 +166,7 @@ Global + Uniform 报告的是共享索引器本身的定位指标，精细分支
 
 三种子的联合模型最后三轮训练 BCE 分别为 0.3520、0.3909、0.6341，没有 Valid 单类退化。种子 1234 的训练 BCE 低于其均匀对照的 0.6142，但其 Valid 最优 MCC 接近均匀对照，泛化表现较低。种子 123456 两个精细分支的训练损失下降均较慢，均选第 5 轮。修复覆盖收益跨种子复现，检测收益主要出现在 ≥2041 BPE 组的固定阈值 MCC。[种子 1234](results/coarse_to_fine_512/seed1234/summary.json) · [种子 123456](results/coarse_to_fine_512/seed123456/summary.json)
 
-### 实测开销与验证
+#### 实测开销与验证
 
 | 划分 | Simple 正文 BPE | 全局块 | 窗口 | 批量前向 | 编码与汇聚耗时 |
 | --- | ---: | ---: | ---: | ---: | ---: |
