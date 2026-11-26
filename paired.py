@@ -20,7 +20,7 @@ import context_selection as context
 import repair_oracle as repair
 from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, collate, prepare_function
 from csp_model import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, CompactionClassifier, pack
-from window_inputs import BASE, DATA, ROOT, grouped_metrics
+from window_inputs import BASE, DATA, ROOT, grouped_metrics, seed_path
 from rgcl.artifacts import write_json
 from rgcl.config import ADAM_EPSILON, BACKBONES, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, SEEDS, WARMUP_FRACTION
 from rgcl.data import prime_source_rows
@@ -40,6 +40,7 @@ ORACLE_WEIGHTS = ROOT / "checkpoints" / "unixcoder_repair_oracle"
 PREDICTED_DIFF = "predicted_diff"
 ORACLE_NOISE = "oracle_noise"
 UNIX_METHODS = (*context.METHODS, *repair.METHODS, PREDICTED_DIFF, ORACLE_NOISE)
+CODEBERT_UNIFORM = "codebert_uniform4"
 
 
 def make_model(tokenizer, method, *, long_input=False, pretrained=True):
@@ -375,7 +376,7 @@ def measure_data(split, tokenizer, method, *, analyze=False):
         prepare = partial(context.prepare, method=method, parser=parser, analyze=analyze)
         data = CompactData(split, tokenizer, prepare=prepare)
     else:
-        data = CompactData(split, tokenizer, alternatives=METHODS[method][0])
+        data = CompactData(split, tokenizer, alternatives=False if method==CODEBERT_UNIFORM else METHODS[method][0])
     return data, perf_counter()-start
 
 
@@ -474,8 +475,8 @@ def fit_512_inputs(tokenizer, datasets, root, weights, *, method, seed, configur
 
 
 def run(method, tokenizer, *, seed=SEED):
-    if seed != SEED and method != "context_aware":
-        raise ValueError("Supplementary seeds are configured for Context-Aware")
+    if seed != SEED and method not in ("context_aware",CODEBERT_UNIFORM):
+        raise ValueError("Supplementary seeds are configured for Context-Aware and CodeBERT Uniform-4")
     if method == ORACLE_NOISE:
         from oracle_noise import run_oracle_noise
 
@@ -486,15 +487,18 @@ def run(method, tokenizer, *, seed=SEED):
         return run_predicted_diff(tokenizer)
     unixcoder = method in UNIX_METHODS
     privileged = method in repair.METHODS
-    root = (ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS) / method
-    if seed != SEED:
-        root = root / f"seed{seed}"
+    if method == CODEBERT_UNIFORM:
+        if seed == SEED:
+            print("CodeBERT Uniform-4 Seed 42 is archived at e094c1e",flush=True)
+            return
+        root = seed_path(ROOT/"results"/"paired"/"uniform4",seed)
+        weights = seed_path(ROOT/"checkpoints"/"paired"/"uniform4",seed)
+    else:
+        root = seed_path((ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS)/method,seed)
+        weights = seed_path((ORACLE_WEIGHTS if privileged else UNIX_WEIGHTS if unixcoder else WEIGHTS)/method,seed)
     if (root / "metrics.json").exists():
         print(method, "already complete", flush=True)
         return
-    weights = (ORACLE_WEIGHTS if privileged else UNIX_WEIGHTS if unixcoder else WEIGHTS) / method
-    if seed != SEED:
-        weights = weights / f"seed{seed}"
     weights.mkdir(parents=True, exist_ok=True)
     set_seed(seed)
     model = make_model(tokenizer, method)
@@ -503,6 +507,8 @@ def run(method, tokenizer, *, seed=SEED):
     valid, valid_prep = measure_data("valid", tokenizer, method)
     config = classifier_config(method)
     config["seed"] = seed
+    if method == CODEBERT_UNIFORM:
+        config.update(method="uniform4",backbone="codebert",input_revision="e094c1e")
     if unixcoder:
         config.update(model_id=BACKBONES["unixcoder"][0], model_revision=BACKBONES["unixcoder"][1],
                       quotas=QUOTAS if method == "uniform4" else context.BASE_QUOTAS,
@@ -563,7 +569,7 @@ def run(method, tokenizer, *, seed=SEED):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("methods", choices=(*METHODS, *UNIX_METHODS), nargs="*")
+    parser.add_argument("methods", choices=(*METHODS,*UNIX_METHODS,CODEBERT_UNIFORM), nargs="*")
     parser.add_argument("--smoke-only", action="store_true")
     parser.add_argument("--seed", type=int, choices=SEEDS, default=SEED)
     args = parser.parse_args()

@@ -2,6 +2,41 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## 三种子外部基线与冻结表示诊断
+
+StagedVulBERT、SEA、VulnScout 和 CodeBERT Uniform-4 的补充种子使用各自原有训练协议。统一按完整原始 CodeBERT BPE 分层，Test 的 ≤510、511–1020、1021–2040 和 ≥2041 组分别有 305、242、235 和 346 个函数。配对指标按两侧较长函数归组。Uniform-4 Seed 42 来自 `e094c1e`，当时保存的索引和标签经顺序核对后对应到官方 `sample_key`。[统一分层结果](results/baseline_completion/) · [机制报告](results/next_stage_diagnosis/report.md) · [冻结表示实验](results/representation_diagnosis/)
+
+| 方法 | 整体 MCC | >510 MCC | ≥2041 MCC | 整体 ROC-AUC | 配对正确率 | Test 端到端秒数 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 当前 LongVul | **0.1065 ± 0.0158** | **0.1007 ± 0.0259** | **0.0498 ± 0.0311** | 0.5622 | **17.85%** | 36.68 |
+| Context-Aware | 0.0956 ± 0.0211 | 0.0786 ± 0.0205 | 0.0460 ± 0.0174 | 0.5611 | 15.19% | 24.98 |
+| 历史 Coarse-to-Fine | 0.0792 ± 0.0307 | 0.0627 ± 0.0370 | 0.0285 ± 0.0469 | 0.5630 | 15.07% | 21.68 |
+| 匹配均匀采样 | 0.0643 ± 0.0140 | 0.0395 ± 0.0083 | 0.0064 ± 0.0283 | 0.5501 | 10.70% | 21.58 |
+| StagedVulBERT | 0.0916 ± 0.0160 | 0.0723 ± 0.0211 | 0.0133 ± 0.0333 | 0.5603 | 12.71% | 81.08 |
+| SEA | 0.0890 ± 0.0015 | 0.0619 ± 0.0001 | 0.0408 ± 0.0161 | 0.5501 | 10.70% | 53.95 |
+| VulnScout | 0.0337 ± 0.0209 | 0.0164 ± 0.0134 | 0.0049 ± 0.0297 | 0.5219 | 7.39% | 62.81 |
+| CodeBERT Uniform-4 | 0.0485 ± 0.0486 | 0.0339 ± 0.0544 | 0.0327 ± 0.0308 | 0.5328 | 5.50% | 13.61 |
+
+MCC 为三个种子的均值 ± 样本标准差。LongVul 整体、长组相对最高外部均值分别高 0.0149 和 0.0283，≥2041 组高 0.0090。单种子结果存在交叉，Seed 42 的 Uniform-4 整体 MCC 为 0.1015，后两种子为 0.0380 和 0.0060。SEA 的配对排序准确率为 63.53%，高于 LongVul 的 57.57%。VulnScout 的分类头训练平均耗时 16.89 秒，另有约 294.77 秒冻结特征提取。Uniform-4 Seed 42 的峰值显存来自历史两步测量。[逐种子指标与成本](results/baseline_completion/summary.json)
+
+六个精细分类检查点的原生 Valid 预测均精确复现。困难组的前缀更新正常，完整训练留下较小的精细编码器位移。64 个配对的小样本实验中，三种困难布局均能显著降损。冻结表示对照中，当前原始源码重编码在 Seed 42 的整体 MCC 为 0.0941，同布局冻结 Token 为 0.0597，加入原始位置后为 0.0630。块级 Seed 42 对照和单独标注的特权 Oracle、梯度与布局干预证据均见机制报告。[机制结果和待验证假设](results/next_stage_diagnosis/report.md)
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4 TOKENIZERS_PARALLELISM=true
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" -m diagnostics.next_stage --stage cpu
+for seed in 1234 123456; do
+    "$PYTHON" stagedvulbert.py --seed "$seed"
+    "$PYTHON" window_baselines.py sea --seed "$seed"
+    "$PYTHON" paired.py codebert_uniform4 --seed "$seed"
+    "$PYTHON" window_baselines.py vulnscout --seed "$seed"
+done
+"$PYTHON" -m diagnostics.next_stage --stage gpu
+"$PYTHON" -m diagnostics.next_stage --stage report
+"$PYTHON" -m diagnostics.representations
+"$PYTHON" -m unittest discover -s tests -v
+```
+
 ## 修复引导索引器的任务适配
 
 固定 `efa10f4` 的下游设置。全局分支沿用 Simple、非重叠 UniXcoder 窗口和固定 32 BPE 块。精细分支沿用中心优先检索、96 位置上下文预留、512 位置输入和 Global Fusion。索引器使用 Train 修复标注和函数标签，精细分支使用函数标签。精细训练期间索引器冻结，Test 检索只使用当前函数。

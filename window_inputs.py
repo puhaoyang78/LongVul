@@ -14,6 +14,7 @@ BASE = ROOT.parents[2] / "resource/codebert-base"
 UPSTREAM = ROOT / "vendor"
 sys.path.insert(0, str(ROOT.parent / "RGCL"))
 from rgcl.data import prime_source_rows
+from rgcl.config import SEEDS
 from rgcl.metrics import metrics
 
 sys.path.insert(0, str(UPSTREAM / "SEA"))
@@ -30,6 +31,10 @@ GROUPS = {
 }
 COUNTERS = ("observations", "covered_bpe_total", "fully_covered_observations",
             "plm_windows", "plm_batch_calls")
+
+
+def seed_path(path, seed):
+    return path if seed == SEEDS[0] else path / f"seed{seed}"
 
 
 def sea_input(tokenizer, ids):

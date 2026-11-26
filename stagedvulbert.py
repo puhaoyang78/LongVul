@@ -27,6 +27,7 @@ from Models.StagedModel_vul import Model
 from rgcl.artifacts import write_json
 from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
+from window_inputs import SEEDS, seed_path
 
 REVISION = "d589175880ff99b0192f4ded54f5455951a696fe"
 RESOURCE = ROOT.parents[2] / "resource"
@@ -148,9 +149,9 @@ def predict(model, dataset):
     return scores, perf_counter()-start, torch.cuda.max_memory_allocated()
 
 
-def report(split, data, scores, seconds, peak):
+def report(split, data, scores, seconds, peak, *, out):
     rows = data.metadata
-    with gzip.open(OUT / f"{split}.csv.gz", "wt") as stream:
+    with gzip.open(out / f"{split}.csv.gz", "wt") as stream:
         writer = csv.DictWriter(stream, fieldnames=[*rows[0], "probability", "prediction"])
         writer.writeheader()
         writer.writerows(dict(r, probability=p, prediction=int(p > .5)) for r, p in zip(rows, scores, strict=True))
@@ -175,35 +176,36 @@ def coverage(data):
                 functions_with_empty_segment=sum(r["empty_segments"]>0 for r in rows))
 
 
-def run(smoke_only):
+def run(smoke_only, seed=SEED):
+    out,weights = seed_path(OUT,seed),seed_path(WEIGHTS,seed)
     args = SimpleNamespace(block_size=512, seg_num=4, device=torch.device("cuda:0"))
     if torch.cuda.device_count() != 1 or "4090" not in torch.cuda.get_device_name():
         raise ValueError("select a single RTX 4090")
     rev = subprocess.check_output(["git", "-C", str(UPSTREAM), "rev-parse", "HEAD"], text=True).strip()
     if rev != REVISION:
         raise ValueError("wrong upstream revision")
-    OUT.mkdir(parents=True, exist_ok=True)
-    WEIGHTS.mkdir(parents=True, exist_ok=True)
-    if (OUT / "metrics.json").exists() and not smoke_only:
+    out.mkdir(parents=True, exist_ok=True)
+    weights.mkdir(parents=True, exist_ok=True)
+    if (out / "metrics.json").exists() and not smoke_only:
         raise FileExistsError("completed experiment already exists")
     torch.set_num_threads(4)
-    set_seed(SEED)
+    set_seed(seed)
     tok = RobertaTokenizer.from_pretrained(BASE, local_files_only=True)
     length_tok = RobertaTokenizerFast.from_pretrained(BASE, local_files_only=True)
     model, audit = build(args, tok)
-    write_json(OUT / "initialization.json", audit)
+    write_json(out / "initialization.json", audit)
     print("Verified MSP tensors:", len(audit["matched"]), flush=True)
     start = perf_counter()
     train = PrimeFunctions("train", tok, length_tok, args)
     train_prep = perf_counter()-start
     smoke_result = smoke(model, train)
-    write_json(OUT / "smoke.json", smoke_result)
+    write_json(out / "smoke.json", smoke_result)
     print("Optimizer smoke", smoke_result, flush=True)
     if smoke_only:
         return
     del model
     torch.cuda.empty_cache()
-    set_seed(SEED)
+    set_seed(seed)
     model, _ = build(args, tok)
     start = perf_counter()
     valid = PrimeFunctions("valid", tok, length_tok, args)
@@ -212,14 +214,14 @@ def run(smoke_only):
     steps = math.ceil(len(train)/BATCH)
     opt = optimizer_for(model)
     scheduler = get_linear_schedule_with_warmup(opt, steps*EPOCHS//5, steps*EPOCHS)
-    cfg = dict(upstream=REVISION, seed=SEED, epochs=EPOCHS, micro_batch=MICRO, effective_batch=BATCH,
+    cfg = dict(upstream=REVISION, seed=seed, epochs=EPOCHS, micro_batch=MICRO, effective_batch=BATCH,
                accumulation=BATCH//MICRO, steps_per_epoch=steps, warmup_steps=steps*EPOCHS//5, lr=LR,
                optimizer="torch.optim.AdamW", eps=EPS, weight_decay=0, clip_norm=1., scheduler="linear",
                block_size=512, seg_num=4, layers_per_stage=6, precision="FP32 eager", threshold=.5,
                selection="highest full validation MCC, earliest tie", loss="official two-class cross entropy",
                torch=torch.__version__, cuda=torch.version.cuda, gpu=torch.cuda.get_device_name(),
                transformers=transformers.__version__, python=platform.python_version(), host=platform.node())
-    write_json(OUT / "config.json", cfg)
+    write_json(out / "config.json", cfg)
     history, best = [], -math.inf
     for epoch in range(1, EPOCHS+1):
         model.train()
@@ -249,16 +251,16 @@ def run(smoke_only):
         metric = metrics([r["target"] for r in valid.metadata], scores)
         if metric["mcc"] > best:
             best = metric["mcc"]
-            tmp = WEIGHTS / "best.tmp"
+            tmp = weights / "best.tmp"
             torch.save(model.state_dict(), tmp)
-            os.replace(tmp, WEIGHTS / "best.pt")
+            os.replace(tmp, weights / "best.pt")
         history.append(dict(epoch=epoch, loss=total_loss/count, functions=count, updates=updates,
                             seconds=seconds, peak_allocated_bytes=peak, valid_seconds=valid_time, validation=metric))
-        write_json(OUT / "epochs.json", history)
+        write_json(out / "epochs.json", history)
         print(epoch, "valid MCC", metric["mcc"], "train seconds", seconds, flush=True)
     del opt, scheduler
     selected = max(history, key=lambda r:r["validation"]["mcc"])
-    model.load_state_dict(torch.load(WEIGHTS / "best.pt", map_location="cpu", weights_only=True), strict=True)
+    model.load_state_dict(torch.load(weights / "best.pt", map_location="cpu", weights_only=True), strict=True)
     start = perf_counter()
     test = PrimeFunctions("test", tok, length_tok, args)
     test_prep = perf_counter()-start
@@ -267,13 +269,15 @@ def run(smoke_only):
                   peak_train_allocated_bytes=max(r["peak_allocated_bytes"] for r in history),
                   coverage={s:coverage(d) for s,d in (("train",train),("valid",valid),("test",test))}, split={})
     for split, data in (("valid", valid), ("test", test)):
-        result["split"][split] = report(split, data, *predict(model, data))
+        result["split"][split] = report(split, data, *predict(model, data),out=out)
     if result["split"]["valid"]["groups"]["overall"] != selected["validation"]:
         raise ValueError("best checkpoint validation replay differs")
-    write_json(OUT / "metrics.json", result)
+    write_json(out / "metrics.json", result)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke-only", action="store_true")
-    run(parser.parse_args().smoke_only)
+    parser.add_argument("--seed",type=int,choices=SEEDS,default=SEED)
+    args = parser.parse_args()
+    run(args.smoke_only,args.seed)

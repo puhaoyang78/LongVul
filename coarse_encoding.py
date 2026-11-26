@@ -188,11 +188,15 @@ class FusionClassifier(nn.Module):
         self.fusion = nn.Linear(2*width if fusion == "global" else width, width, bias=False)
         nn.init.zeros_(self.fusion.weight)
 
-    def forward(self, batch, *, details=False):
+    def representations(self, batch):
         ids = batch["fixed"][:,0].long()
         mask = torch.arange(ids.shape[1], device=ids.device)[None,:] < batch["lengths"][:,None]
         cls = self.fine.encoder(input_ids=ids, attention_mask=mask.long()).last_hidden_state[:,0]
-        mixed = cls+self.fusion(batch["coarse"])
+        return cls,self.fusion(batch["coarse"])
+
+    def forward(self, batch, *, details=False):
+        cls,residual = self.representations(batch)
+        mixed = cls+residual
         logits = self.fine.classifier(mixed[:,None])[:,0]
         output = dict(logits=logits, probability=logits.sigmoid())
         if "labels" in batch:

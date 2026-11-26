@@ -13,7 +13,7 @@ from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warm
 import transformers
 
 from window_inputs import (BASE, ROOT, UPSTREAM, SCOUT_LENGTH, SCOUT_OVERLAP, SEA_LENGTH, SEA_STEP,
-                           SEA_TRAIN_WINDOWS, SEA_WIDTH, WindowData, coverage, grouped_metrics, save_rows)
+                           SEA_TRAIN_WINDOWS, SEA_WIDTH, SEEDS, WindowData, coverage, grouped_metrics, save_rows, seed_path)
 from rgcl.artifacts import write_json
 from rgcl.metrics import metrics
 from rgcl.training import LOSVERAdamW, load_training_state, restore_rng, save_training_state
@@ -194,9 +194,9 @@ def cached_scores(model, features):
     return torch.cat([model(block.cuda()).sigmoid().cpu() for block in features.split(SCOUT_BATCH)])
 
 
-def run(method, smoke_only):
-    root = ROOT / "results" / method
-    weights = ROOT / "checkpoints" / method
+def run(method, smoke_only, seed=SEED):
+    root = seed_path(ROOT / "results" / method,seed)
+    weights = seed_path(ROOT / "checkpoints" / method,seed)
     if not smoke_only and (root / "metrics.json").exists():
         raise FileExistsError(f"completed result already exists in {root}")
     if torch.cuda.device_count() != 1 or "4090" not in torch.cuda.get_device_name():
@@ -208,7 +208,7 @@ def run(method, smoke_only):
         raise ValueError(f"{directory}: expected {revision}, got {installed}")
     torch.set_num_threads(4)
     torch.backends.cudnn.deterministic = True
-    set_seed(SEED)
+    set_seed(seed)
     scout = method == "vulnscout"
     tokenizer = AutoTokenizer.from_pretrained(BASE, local_files_only=True, use_fast=True)
     prep = {}
@@ -237,7 +237,7 @@ def run(method, smoke_only):
             return
         del model
         torch.cuda.empty_cache()
-        set_seed(SEED)
+        set_seed(seed)
         model = LongCodeModel(method).cuda()
 
     start = perf_counter()
@@ -245,7 +245,7 @@ def run(method, smoke_only):
     prep["valid"] = perf_counter()-start
     batch = SCOUT_BATCH if scout else SEA_BATCH
     epochs = SCOUT_EPOCHS if scout else SEA_EPOCHS
-    config = dict(method=method, upstream=revision, seed=SEED, epochs=epochs, train_batch=batch,
+    config = dict(method=method, upstream=revision, seed=seed, epochs=epochs, train_batch=batch,
                   eval_batch=EVAL_BATCH, eval_window_batch=EVAL_LIMIT, train_micro=batch if scout else SEA_MICRO,
                   train_window_batch=0 if scout else SEA_TRAIN_LIMIT, max_train_windows_per_function=None if scout else SEA_TRAIN_WINDOWS,
                   window_length=SCOUT_LENGTH if scout else SEA_WIDTH, stride=SCOUT_OVERLAP if scout else SEA_STEP,
@@ -343,5 +343,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("method", choices=REVISIONS)
     parser.add_argument("--smoke-only", action="store_true")
+    parser.add_argument("--seed",type=int,choices=SEEDS,default=SEED)
     args = parser.parse_args()
-    run(args.method, args.smoke_only)
+    run(args.method,args.smoke_only,args.seed)

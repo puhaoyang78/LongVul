@@ -53,8 +53,8 @@ def load_context_encoder():
 
 
 @torch.inference_mode()
-def context_encoder_batches(model, tokenizer, windows):
-    """Encode each source window once and expose local prefix sums for span pooling."""
+def context_encoder_batches(model, tokenizer, windows, *, prefix_sum=True):
+    """Encode each source window once for span pooling or frozen Token extraction."""
     while batch := list(islice(windows, CONTEXT_BATCH)):
         width = max(hi-lo+2 for _,lo,hi,_ in batch)
         ids = torch.full((len(batch), width), tokenizer.pad_token_id, dtype=torch.long)
@@ -64,7 +64,7 @@ def context_encoder_batches(model, tokenizer, windows):
             ids[i, :len(values)] = torch.tensor(values)
             mask[i, :len(values)] = True
         hidden = model(input_ids=ids.cuda(), attention_mask=mask.cuda()).last_hidden_state
-        yield batch, F.pad(hidden.float().cumsum(1), (0,0,1,0)), ids.numel()
+        yield batch, F.pad(hidden.float().cumsum(1), (0,0,1,0)) if prefix_sum else hidden, ids.numel()
 
 
 def contextual_vectors(model, sources, tokenizer, split):
