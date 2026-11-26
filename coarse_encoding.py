@@ -27,7 +27,7 @@ def encoder_window_ends(source):
     return ends
 
 
-def encode_blocks(model, sources, tokenizer, window_ends, blocks):
+def encode_blocks(model, sources, tokenizer, window_ends, blocks, *, token_features=None):
     """Pool each block from every overlapping nonpadding encoder window."""
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -40,7 +40,18 @@ def encode_blocks(model, sources, tokenizer, window_ends, blocks):
     windows = ((source,lo,hi,i) for i,(source,ends) in enumerate(zip(sources,window_ends,strict=True))
                for lo,hi in zip([0,*ends[:-1]],ends))
     calls = sequences = 0
-    for batch,prefix,padded in context_encoder_batches(model,tokenizer,windows):
+    token_copy_seconds = 0.
+    token_offsets = list(accumulate((len(s.ids) for s in sources),initial=0))
+    for batch,values,padded in context_encoder_batches(model,tokenizer,windows,prefix_sum=token_features is None):
+        prefix = values
+        if token_features is not None:
+            prefix = F.pad(values.float().cumsum(1),(0,0,1,0))
+            start_copy = perf_counter()
+            hidden = values.cpu()
+            for row,(_,lo,hi,i) in enumerate(batch):
+                start = token_offsets[i]
+                token_features[start+lo:start+hi].copy_(hidden[row,1:1+hi-lo])
+            token_copy_seconds += perf_counter()-start_copy
         for _,_,_,i in batch:
             padding[i] += padded//len(batch)
         requests = [(offsets[i]+block,row,1+a-lo,1+b-lo)
@@ -57,9 +68,12 @@ def encode_blocks(model, sources, tokenizer, window_ends, blocks):
     vectors = sums.div_(sizes[:,None]).half()
     torch.cuda.synchronize()
     body = sum(len(s.ids) for s in sources)
-    return vectors,dict(seconds=perf_counter()-started,body_bpe=body,blocks=len(vectors),windows=sequences,batch_calls=calls,
+    result = dict(seconds=perf_counter()-started,body_bpe=body,blocks=len(vectors),windows=sequences,batch_calls=calls,
                         unpadded_positions=body+2*sequences,padded_positions=sum(padding),
                         per_function_padded_positions=padding,cached_vector_bytes=vectors.nbytes,peak_allocated_bytes=torch.cuda.max_memory_allocated())
+    if token_features is not None:
+        result.update(token_feature_bytes=token_features.nbytes,token_transfer_and_copy_seconds=token_copy_seconds)
+    return vectors,result
 
 
 def block_mass(ends, spans):
@@ -76,11 +90,18 @@ def repair_block_mass(source, ends, edits, kinds):
 
 
 class BlockData(Dataset):
-    def __init__(self, rows, ends, vectors, repair_targets=None):
+    def __init__(self, rows, ends, vectors, repair_targets=None, *, token_features=None):
         self.offsets = list(accumulate(map(len,ends),initial=0))
         self.targets = torch.tensor([r["target"] for r in rows])
         self.vectors = vectors
         self.repair_targets = repair_targets
+        self.token_features = token_features
+        if token_features is not None:
+            self.token_offsets = list(accumulate((e[-1] for e in ends),initial=0))
+            if self.token_offsets[-1] != len(token_features) or any(
+                e[:-1] != list(range(BLOCK,e[-1],BLOCK)) for e in ends
+            ):
+                raise ValueError("Token matching requires one frozen state per BPE and fixed 32-BPE blocks")
         if self.offsets[-1] != len(vectors) or len(rows) != len(ends):
             raise ValueError("Cached block vectors do not align with source membership")
 
@@ -89,16 +110,31 @@ class BlockData(Dataset):
 
     def __getitem__(self, i):
         a,b = self.offsets[i:i+2]
-        return self.vectors[a:b], self.targets[i], None if self.repair_targets is None else self.repair_targets[i]
+        example = self.vectors[a:b], self.targets[i], None if self.repair_targets is None else self.repair_targets[i]
+        if self.token_features is not None:
+            start,end = self.token_offsets[i:i+2]
+            return (*example,self.token_features[start:end])
+        return example
 
 
 def collate_blocks(examples):
-    vectors, targets, repair = zip(*examples, strict=True)
+    vectors,targets,repair,*token_features = zip(*examples,strict=True)
     padded = pad_sequence(vectors, batch_first=True)
     valid = torch.arange(padded.shape[1])[None, :] < torch.tensor([len(v) for v in vectors])[:, None]
     batch = dict(blocks=padded, valid=valid, labels=torch.stack(targets))
     if repair[0] is not None:
         batch["repair"] = pad_sequence(repair, batch_first=True)
+    if token_features:
+        frozen, = token_features
+        counts = torch.tensor([len(v) for v in vectors])
+        offsets = list(accumulate(counts.tolist(),initial=0))
+        # Pack only existing blocks. Rectangular Token padding would replicate outliers across the batch.
+        tokens = frozen[0].new_zeros((offsets[-1]*BLOCK,frozen[0].shape[-1]))
+        sizes = torch.full((offsets[-1],),BLOCK,dtype=torch.long)
+        for start,end,states in zip(offsets[:-1],offsets[1:],frozen,strict=True):
+            tokens[start*BLOCK:start*BLOCK+len(states)].copy_(states)
+            sizes[end-1] = len(states)-(end-start-1)*BLOCK
+        batch.update(tokens=tokens,block_sizes=sizes,owners=torch.arange(len(counts)).repeat_interleave(counts))
     return batch
 
 
@@ -109,21 +145,37 @@ def global_pool(blocks, valid):
 
 
 class ContextIndexer(nn.Module):
-    def __init__(self, width):
+    def __init__(self, width, matching="block"):
         super().__init__()
+        if matching not in ("block","token_mean","token_logmeanexp"):
+            raise ValueError(f"Unknown matching mode {matching}")
+        self.matching = matching
         self.query = nn.Linear(2*width, QUERY_HEADS*INDEX_WIDTH, bias=False)
         self.key = nn.Linear(width, INDEX_WIDTH, bias=False)
 
-    def forward(self, blocks, valid, global_state, *, per_head=False):
+    def forward(self, blocks, valid, global_state, *, per_head=False, token_batch=None):
         query = self.query(F.layer_norm(global_state, (global_state.shape[-1],))).reshape(-1, QUERY_HEADS, INDEX_WIDTH)
-        key = self.key(F.layer_norm(blocks, (blocks.shape[-1],)))
-        score = torch.bmm(query, key.transpose(1,2))/math.sqrt(INDEX_WIDTH)
+        if self.matching == "block":
+            key = self.key(F.layer_norm(blocks, (blocks.shape[-1],)))
+            score = torch.bmm(query, key.transpose(1,2))/math.sqrt(INDEX_WIDTH)
+        else:
+            tokens,sizes,owners = (token_batch[field] for field in ("tokens","block_sizes","owners"))
+            key = self.key(F.layer_norm(tokens.float(),(tokens.shape[-1],))).reshape(-1,BLOCK,INDEX_WIDTH)
+            token_scores = torch.bmm(query[owners],key.transpose(1,2))/math.sqrt(INDEX_WIDTH)
+            mask = torch.arange(BLOCK,device=sizes.device) < sizes[:,None]
+            if self.matching == "token_mean":
+                pooled = token_scores.masked_fill(~mask[:,None,:],0).sum(-1)/sizes[:,None]
+            else:
+                pooled = token_scores.masked_fill(~mask[:,None,:],-torch.inf).logsumexp(-1)-sizes[:,None].log()
+            score = query.new_zeros((*valid.shape,QUERY_HEADS))
+            score[valid] = pooled
+            score = score.transpose(1,2)
         heads = score.masked_fill(~valid[:, None, :], -torch.inf).softmax(-1)
         return heads if per_head else heads.mean(1)
 
 
 class CoarseClassifier(nn.Module):
-    def __init__(self, width, supervision, repair_weight=0., *, bypass=True):
+    def __init__(self, width, supervision, repair_weight=0., *, bypass=True, matching="block"):
         super().__init__()
         self.width = width
         self.supervision = supervision
@@ -132,7 +184,7 @@ class CoarseClassifier(nn.Module):
         inputs = 3*width if bypass else width
         self.representation = nn.Sequential(nn.LayerNorm(inputs), nn.Linear(inputs,width), nn.Tanh())
         self.head = nn.Sequential(nn.Dropout(.1), nn.Linear(width,1))
-        self.indexer = None if supervision == "global" else ContextIndexer(width)
+        self.indexer = None if supervision == "global" else ContextIndexer(width,matching)
 
     def auxiliary(self, g, z):
         features = torch.cat((g,z),dim=-1) if self.bypass else z
@@ -145,7 +197,7 @@ class CoarseClassifier(nn.Module):
         if self.indexer is None:
             z = g[:, :self.width]
         else:
-            scores = self.indexer(blocks, valid, g, per_head=inspect)
+            scores = self.indexer(blocks, valid, g, per_head=inspect, token_batch=batch)
             p = scores.mean(1) if inspect else scores
             pooling = p.detach() if self.supervision == "repair" else p
             z = torch.bmm(pooling[:, None, :], blocks).squeeze(1)

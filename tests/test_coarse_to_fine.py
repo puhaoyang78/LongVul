@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from coarse_encoding import CoarseClassifier, block_mass, repair_block_mass
+from coarse_encoding import (INDEX_WIDTH, QUERY_HEADS, BlockData, CoarseClassifier, ContextIndexer,
+                             block_mass, collate_blocks, repair_block_mass)
 from coarse_retrieval import block_ends, lengths, part_overlap, retrieve, uncovered
 from context_selection import contains, merge, occupied, source_parser
 from repair_oracle import EDIT_TYPES, GAP_TYPES
@@ -83,6 +84,66 @@ class RetrievalTest(unittest.TestCase):
 
 
 class IndexerTest(unittest.TestCase):
+    def test_token_matching_matches_per_head_reference_and_masks_tail(self):
+        torch.manual_seed(42)
+        ends = [[32,35],[9],[32,64,65]]
+        width = 8
+        values = torch.randn(109,width)
+        blocks = torch.randn(6,width)
+        data = BlockData([{"target":1}]*3,ends,blocks,token_features=values)
+        batch = collate_blocks([data[i] for i in range(3)])
+        self.assertEqual(batch["block_sizes"].tolist(),[32,3,9,32,32,1])
+        self.assertEqual(batch["tokens"].shape,(6*32,width))
+        self.assertEqual(batch["owners"].tolist(),[0,0,1,2,2,2])
+        g = torch.randn(3,2*width)
+        for mode in ("token_mean","token_logmeanexp"):
+            model = ContextIndexer(width,mode)
+            keys = model.key(torch.nn.functional.layer_norm(values,(width,)))
+            queries = model.query(torch.nn.functional.layer_norm(g,(2*width,))).reshape(3,QUERY_HEADS,INDEX_WIDTH)
+            expected = torch.zeros(3,QUERY_HEADS,3)
+            offset = 0
+            for i,cut in enumerate(ends):
+                logits = queries[i] @ keys[offset:offset+cut[-1]].T / INDEX_WIDTH**.5
+                part = logits.split([b-a for a,b in zip([0,*cut[:-1]],cut)],dim=1)
+                agg = [x.mean(1) if mode=="token_mean" else x.logsumexp(1)-np.log(x.shape[1]) for x in part]
+                expected[i,:,:len(agg)] = torch.stack(agg,1).softmax(1)
+                offset += cut[-1]
+            output = model(batch["blocks"],batch["valid"],g,per_head=True,token_batch=batch)
+            torch.testing.assert_close(output,expected)
+            tail = torch.arange(32)[None,:] >= batch["block_sizes"][:,None]
+            perturbed = dict(batch,tokens=batch["tokens"].clone())
+            perturbed["tokens"][tail.flatten()] = 100*torch.randn_like(perturbed["tokens"][tail.flatten()])
+            changed = model(batch["blocks"],batch["valid"],g,per_head=True,token_batch=perturbed)
+            torch.testing.assert_close(changed,output,atol=0.,rtol=0.)
+            output[:,0,0].sum().backward()
+            self.assertTrue(all(p.grad.isfinite().all() and p.grad.norm()>0 for p in model.parameters()))
+
+    def test_logmeanexp_has_no_length_bias_at_equal_scores_and_emphasizes_peaks(self):
+        values = torch.zeros(2,32,4)
+        values[1] = torch.tensor([1.,-1.,1.,-1.])
+        values[0,0] = values[1,0]
+        values[0,1] = -values[1,0]
+        for mode in ("token_mean","token_logmeanexp"):
+            model = ContextIndexer(4,mode)
+            with torch.no_grad():
+                model.query.weight.zero_()
+                model.query.weight[:,0] = 1.
+                model.key.weight.zero_()
+                model.key.weight[:,0] = 1.
+            batch = dict(tokens=values.reshape(-1,4),block_sizes=torch.tensor([2,32]),owners=torch.tensor([0,0]))
+            valid = torch.ones(1,2,dtype=torch.bool)
+            g = torch.tensor([[1.,-1.,1.,-1.,1.,-1.,1.,-1.]])
+            blocks = torch.zeros(1,2,4)
+            equal = dict(batch,tokens=values[1].repeat(2,1))
+            torch.testing.assert_close(model(blocks,valid,g,token_batch=equal),torch.full((1,2),.5))
+            novel = values.clone()
+            novel[1] = 0.
+            score = model(blocks,valid,g,token_batch=dict(batch,tokens=novel.reshape(-1,4)))
+            if mode=="token_mean":
+                torch.testing.assert_close(score,torch.full((1,2),.5))
+            else:
+                self.assertGreater(score[0,0].item(),.9)
+
     def test_weighted_only_auxiliary_has_no_direct_global_path(self):
         torch.manual_seed(42)
         g = torch.randn(2,16,requires_grad=True)

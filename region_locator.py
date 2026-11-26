@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from transformers import set_seed
 
 from budget_selection import region_ids
-from paired import SEED, UNIX_BASE, LOSVERAdamW, load_training_state, restore_rng, save_training_state
+from paired import SEED, UNIX_BASE, AdamW, load_training_state, restore_rng, save_training_state
 from rgcl.artifacts import write_json
 
 PARTS = 4
@@ -146,7 +146,7 @@ def train_localizer(sources, targets, weights, results, *, vectors=None, feature
     write_json(results / "config.json", config)
     set_seed(SEED)
     model = (Localizer() if vectors is None else RegionHead(train.vectors.shape[-1])).cuda()
-    optimizer = LOSVERAdamW(model.parameters(), lr=LR, eps=1e-8)
+    optimizer = AdamW(model.parameters(), lr=LR, eps=1e-8)
     history = []
     if (weights / "last.pt").exists():
         history, state = load_training_state(weights, model, optimizer, config)

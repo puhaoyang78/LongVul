@@ -55,7 +55,7 @@ def archived(path):
 
 
 def original_uniform_predictions(split,rows):
-    """The old CSV predated sample_key; verify its ordered (idx,target) join."""
+    """The published CSV predated sample_key; verify its ordered (idx,target) join."""
     raw = archived(f"results/paired/uniform4/{split}.csv.gz")
     with gzip.open(io.BytesIO(raw),"rt") as stream:
         saved = list(csv.DictReader(stream))
@@ -124,8 +124,8 @@ def verify_external_protocol(method,seed):
         raise ValueError(f"{method}/{seed} protocol mismatch")
     history = read_json(path/"epochs.json")
     best = max(history,key=lambda e:e["validation"]["mcc"])
-    final = read_json(path/"metrics.json")
-    if best["epoch"]!=final["selected_epoch"]:
+    saved_metrics = read_json(path/"metrics.json")
+    if best["epoch"]!=saved_metrics["selected_epoch"]:
         raise ValueError(f"{method}/{seed}: history and checkpoint selection disagree")
     if method=="vulnscout":
         if len(history)!=saved["epochs"] and len(history)-best["epoch"]!=saved["patience"]:
@@ -494,8 +494,8 @@ def select_rows(split,ids):
 
 def verify_uniform_inputs(tokenizer,splits):
     source = archived("compression.py").decode().replace("from dataset import BUDGET","")
-    old = {"BUDGET":BUDGET}
-    exec(compile(source,f"{ARCHIVED_UNIFORM}:compression.py","exec"),old)
+    archived_module = {"BUDGET":BUDGET}
+    exec(compile(source,f"{ARCHIVED_UNIFORM}:compression.py","exec"),archived_module)
     from compaction import tokenized_batches, prepare_function
     result = {}
     for name in splits:
@@ -504,11 +504,11 @@ def verify_uniform_inputs(tokenizer,splits):
         count = maximum = 0
         for members,texts,encoding in tokenized_batches(rows,tokenizer):
             for row,text,ids,offsets in zip(members,texts,encoding.input_ids,encoding.offset_mapping,strict=True):
-                expected = old["select"]("uniform4",text,ids,offsets)
+                expected = archived_module["select"]("uniform4",text,ids,offsets)
                 view = prepare_function(text,ids,offsets,tokenizer,alternatives=False)
                 n = view["length"]
                 original = [None if i<0 else i for i in view["fixed"][1,1:n-1].tolist()]
-                if original!=expected or view["fixed"][0,:n].tolist()!=old["model_ids"](ids,expected,tokenizer):
+                if original!=expected or view["fixed"][0,:n].tolist()!=archived_module["model_ids"](ids,expected,tokenizer):
                     raise ValueError(f"Uniform-4 input differs from e094c1e at {row['sample_key']}")
                 if archived_rows is not None and tuple(int(archived_rows[count][k]) for k in
                        ("original_bpe","input_length"))!=(len(ids),n):

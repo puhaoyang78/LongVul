@@ -41,14 +41,14 @@ class CompressionStudyTest(unittest.TestCase):
     def test_removed_original_tokens_do_not_count_as_visible(self):
         source = character_source("int f() {\n  ; /* note */\n\n return 1;\n}\n")
         base, nulls = lexical_form(source.code, self.parser, collect_nulls=True)
-        final = ast_form(source.code, base, nulls, self.parser)
-        ids = list(range(20, 20+len(final[0])))
+        compressed = ast_form(source.code, base, nulls, self.parser)
+        ids = list(range(20, 20+len(compressed[0])))
         offsets = np.column_stack((np.arange(len(ids)), np.arange(1, len(ids)+1)))
-        example = mapped_uniform(source, ids, offsets, final, TOKENIZER)
+        example = mapped_uniform(source, ids, offsets, compressed, TOKENIZER)
         self.assertEqual(example["raw"], len(source.code))
         self.assertLess(example["compacted_bpe"], example["raw"])
         comment = source.code.index("note")
-        for deleted in (comment, *final[-1]["removed_null_offsets"]):
+        for deleted in (comment, *compressed[-1]["removed_null_offsets"]):
             self.assertFalse(contains((deleted, deleted+1), example["original_runs"]))
 
 

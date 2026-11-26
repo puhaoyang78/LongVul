@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Subset
 from transformers import get_linear_schedule_with_warmup, set_seed
 
 from coarse_encoding import collate_fine
-from paired import (ADAM_EPSILON, BATCH_SIZE, EPOCHS, LEARNING_RATE, LOSVERAdamW, MAX_GRAD_NORM, WARMUP_FRACTION,
+from paired import (ADAM_EPSILON, BATCH_SIZE, EPOCHS, LEARNING_RATE, AdamW, MAX_GRAD_NORM, WARMUP_FRACTION,
                     predict, to_gpu, train_epoch)
 from rgcl.artifacts import read_json, write_json
 
@@ -37,7 +37,7 @@ def norms(tensors):
 
 def relative_changes(start,end):
     base = norms(start.items())
-    flat = norms((name,end[name]-old) for name,old in start.items())
+    flat = norms((name,end[name]-initial) for name,initial in start.items())
     return {g:dict(parameter_norm=base[g],absolute_update=delta,
                    relative_update=delta/base[g] if base[g] else None) for g,delta in flat.items()}
 
@@ -76,12 +76,12 @@ def reconstruct_order(count,valid_count):
                 first = indices[:PROBE_STEPS[-1]]
             for _ in valid:
                 pass
-        final = torch.get_rng_state()
-    return first,final
+        replay_state = torch.get_rng_state()
+    return first,replay_state
 
 
 def optimizer_for(model,n):
-    optimizer = LOSVERAdamW(model.parameters(),lr=LEARNING_RATE,eps=ADAM_EPSILON)
+    optimizer = AdamW(model.parameters(),lr=LEARNING_RATE,eps=ADAM_EPSILON)
     steps = ceil(n/BATCH_SIZE)*EPOCHS
     scheduler = get_linear_schedule_with_warmup(optimizer,steps*WARMUP_FRACTION,steps)
     return optimizer,scheduler,steps

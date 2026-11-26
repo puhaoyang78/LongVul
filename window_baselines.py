@@ -16,7 +16,7 @@ from window_inputs import (BASE, ROOT, UPSTREAM, SCOUT_LENGTH, SCOUT_OVERLAP, SE
                            SEA_TRAIN_WINDOWS, SEA_WIDTH, SEEDS, WindowData, coverage, grouped_metrics, save_rows, seed_path)
 from rgcl.artifacts import write_json
 from rgcl.metrics import metrics
-from rgcl.training import LOSVERAdamW, load_training_state, restore_rng, save_training_state
+from rgcl.training import LOSVERAdamW as AdamW, load_training_state, restore_rng, save_training_state
 
 sys.path.insert(0, str(UPSTREAM / "VulnScout"))
 
@@ -76,7 +76,7 @@ class LongCodeModel(nn.Module):
 @torch.no_grad()
 def evaluate(model, data, *, features_only=False):
     model.eval()
-    counters = data.new_counters()
+    counters = data.empty_counters()
     outputs, calls = [], 0
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
@@ -99,7 +99,7 @@ def smoke(model, train, criterion):
     # Use the actual longest function and stress the largest training micro-batch.
     longest = sorted(range(len(train)), key=lambda i: train.metadata[i]["original_bpe"], reverse=True)
     index = longest[0]
-    counters = train.new_counters()
+    counters = train.empty_counters()
     model.eval()
     actual_calls = []
     hook = model.encoder.register_forward_pre_hook(lambda module, args: actual_calls.append(len(args[0])))
@@ -119,13 +119,13 @@ def smoke(model, train, criterion):
         model.encoder.eval()
         batch = longest[:2]
         with torch.no_grad():
-            ids, lengths, counts = train.batch(batch, EVAL_LIMIT, train.new_counters())
+            ids, lengths, counts = train.batch(batch, EVAL_LIMIT, train.empty_counters())
             vectors = model.encode(ids, lengths, counts, EVAL_LIMIT)
     else:
         batch = longest[:SEA_MICRO]
     torch.cuda.reset_peak_memory_stats()
     if model.method == "sea":
-        ids, lengths, counts = train.batch(batch, SEA_TRAIN_LIMIT, train.new_counters(), training=True)
+        ids, lengths, counts = train.batch(batch, SEA_TRAIN_LIMIT, train.empty_counters(), training=True)
         vectors = model.encode(ids, lengths, counts, SEA_TRAIN_LIMIT)
     target = train.targets[batch].cuda().float()
     loss = criterion(model(vectors), target)
@@ -153,7 +153,7 @@ def smoke(model, train, criterion):
 def make_optimizer(model):
     if model.method == "vulnscout":
         return torch.optim.Adam(model.head.parameters(), lr=1e-4, weight_decay=1e-5)
-    return LOSVERAdamW(model.parameters(), lr=2e-5, eps=1e-8, weight_decay=0.)
+    return AdamW(model.parameters(), lr=2e-5, eps=1e-8, weight_decay=0.)
 
 
 def train_epoch(model, data, loader, optimizer, scheduler, criterion, counters, cached):
@@ -261,7 +261,7 @@ def run(method, smoke_only, seed=SEED):
                   host=platform.node(), gpu=torch.cuda.get_device_name(), cuda=torch.version.cuda)
     write_json(root / "config.json", config)
     extracted, train_cache, valid_cache = {}, None, None
-    train_counters, train_calls = train.new_counters(), 0
+    train_counters, train_calls = train.empty_counters(), 0
     if scout:
         for data in (train, valid):
             features, counters, calls, seconds, peak = evaluate(model, data, features_only=True)
@@ -300,8 +300,8 @@ def run(method, smoke_only, seed=SEED):
         val_start = perf_counter()
         scores = cached_scores(model, valid_cache) if scout else evaluate(model, valid)[0]
         validation = metrics(valid.targets.tolist(), scores.tolist())
-        improved = validation["mcc"] > best
-        if improved:
+        is_best = validation["mcc"] > best
+        if is_best:
             best, best_epoch = validation["mcc"], epoch
             save_model(weights / "best.pt", model.head.state_dict() if scout else model.state_dict())
         history.append(dict(epoch=epoch, loss=loss, seconds=seconds, updates=len(loader), functions=len(train),

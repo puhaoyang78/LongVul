@@ -10,7 +10,7 @@ from repair_oracle import CONTEXT_TYPES, EDIT_TYPES, GAP_TYPES, reserve_blocks
 
 MAX_FRAGMENTS = 12
 BRIDGE_BPE = 8
-NEW_FRAGMENT_COST = 8
+ADDITIONAL_FRAGMENT_COST = 8
 
 
 def available_graph(graph, weights):
@@ -193,7 +193,7 @@ def optimize(regions, base, seeds, graph, weights, budget, *, scores=None, bridg
                     distance = min((max(lo-center, center-hi, 0) for lo, hi in chosen), default=ends[-1])
                     value += (float(scores[i])+distance/max(1, ends[-1]))*sqrt(ends[i]-starts[i])
             cost = occupied(planned)-room
-            fragment_cost = NEW_FRAGMENT_COST*max(0, len(planned)-len(chosen))
+            fragment_cost = ADDITIONAL_FRAGMENT_COST*max(0, len(planned)-len(chosen))
             key = (value/max(1, cost+fragment_cost), len(gain), -len(planned), -cost, -action[0])
             if value > 0 and (best is None or key > best[0]):
                 best = key, planned, newly, gain

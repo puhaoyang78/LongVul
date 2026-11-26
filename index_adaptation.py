@@ -34,12 +34,12 @@ HEAD_PAIRS = tuple(combinations(range(QUERY_HEADS),2))
 
 
 def published_setup():
-    old = read_json(pipeline.RESULTS/"seed42"/"global_fusion"/"config.json")
+    published = read_json(pipeline.RESULTS/"seed42"/"global_fusion"/"config.json")
     fields = ("block_layout","fusion","context_budget","center_budget","length")
     expected = ("fixed32","global",CONTEXT,BUDGET-CONTEXT,512)
-    if tuple(old[key] for key in fields)!=expected:
+    if tuple(published[key] for key in fields)!=expected:
         raise ValueError("The experiment must use the published fixed-32 Global Fusion settings")
-    return {k:old[k] for k in fields}
+    return {k:published[k] for k in fields}
 
 
 def historical_weights(seed,name):
@@ -263,7 +263,7 @@ def train_method(tokenizer,seed,method,splits):
     edits = paired_annotations(val_split.sources)
     original = reference_runs(seed,"valid",val_split.rows)
     model = initialize(seed,method,source.vectors.shape[-1]).cuda()
-    # The old protocol initializes Q/K and then trains with the constructor's RNG state.
+    # The historical protocol initializes Q/K and then trains with the constructor's RNG state.
     # Probing uses evaluation mode and a private loader generator.
     warm = warm_head(model,seed,train,val,path/"warmup",weights/"warmup") if method=="D" else None
     cpu_rng = torch.get_rng_state()
@@ -291,7 +291,7 @@ def train_method(tokenizer,seed,method,splits):
         area = path/"index"/name
         wdir = weights/"index"/name
         config = dict(index_config(seed,method,weight,epochs,"index_adaptation" if warm else "index_direct"),
-                      target_weighted_ratio=target,new_index_training_epochs=EPOCHS,
+                      target_weighted_ratio=target,index_training_epochs=EPOCHS,
                       probe_batches=PROBE_BATCHES)
         model.load_state_dict(initial_state,strict=True)
         model.repair_weight = weight
@@ -353,7 +353,7 @@ def references(tokenizer,splits):
 def smoke(tokenizer):
     from coarse_encoding import encode_blocks, encoder_window_ends
     from locator_quality import load_context_encoder
-    from paired import LOSVERAdamW
+    from paired import AdamW
     from predicted_diff import load_sources
 
     all_rows = pipeline.prime_source_rows(pipeline.DATA,"train")
@@ -375,7 +375,7 @@ def smoke(tokenizer):
     model.indexer.requires_grad_(False)
     model.train()
     head_before = model.head[-1].weight.detach().clone()
-    opt = LOSVERAdamW(model.parameters(),lr=2e-5)
+    opt = AdamW(model.parameters(),lr=2e-5)
     opt.zero_grad(set_to_none=True)
     model(batch)["loss"].backward()
     opt.step()

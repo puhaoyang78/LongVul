@@ -25,7 +25,7 @@ from context_selection import contains, intersects, merge, occupied, source_pars
 from dependence import (BATCH_BYTES, BATCH_FUNCTIONS, EDGE_TYPES, FRONTEND_ARGS, ISOLATE_BYTES,
                         ISOLATED_TIMEOUT_SECONDS, JAVA, MAX_DEFINITIONS, TIMEOUT_SECONDS, cached_graphs,
                         extract, joern_version, language_suffix)
-from paired import SEED, UNIX_BASE, fit_classifier, make_model, predict, to_gpu
+from paired import AdamW, SEED, UNIX_BASE, fit_classifier, make_model, predict, to_gpu, with_recorded_names
 from region_locator import Localizer, Regions, region_metrics, score_regions, train_localizer, weak_targets
 from repair_oracle import EDIT_TYPES, GAP_TYPES, line_edits, map_edits, overlap_bpe
 from source_regions import Region, analyze, map_dependencies, original_runs, simplify, tokenize_sources
@@ -36,7 +36,6 @@ from rgcl.config import (ADAM_EPSILON, BACKBONES, BATCH_SIZE, DATASETS, EPOCHS, 
 from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
 from rgcl.model import load_tokenizer
-from rgcl.training import LOSVERAdamW
 
 MAX_LENGTH = 1024
 BUDGET = MAX_LENGTH-2
@@ -272,14 +271,14 @@ def matched_graph_metrics(rows, sources, graphs):
 
 def config_for(method, weights, micro):
     config = dict(method=method, seed=SEED, epochs=EPOCHS, batch_size=BATCH_SIZE, micro_batch=micro,
-                length=MAX_LENGTH, lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="LOSVERAdamW", weight_decay=0.,
+                length=MAX_LENGTH, lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="AdamW", weight_decay=0.,
                 warmup=WARMUP_FRACTION, grad_clip=MAX_GRAD_NORM, precision="BF16 autocast, FP32 parameters, SDPA",
                 model_id=BACKBONES["unixcoder"][0], model_revision=BACKBONES["unixcoder"][1],
                 split_functions=dict(zip(SPLITS, DATASETS["primevul_paired"], strict=True)),
                 loss="independent function BCE", checkpoint="full validation MCC; earliest tie", threshold=.5,
                 comparison=">", privileged_test=method.startswith("oracle_"),
                 ddg_cdg_weights=list(weights), edge_hops=1, bridge_bpe=selection.BRIDGE_BPE,
-                fragment_limit=selection.MAX_FRAGMENTS, new_fragment_cost=selection.NEW_FRAGMENT_COST,
+                fragment_limit=selection.MAX_FRAGMENTS, additional_fragment_cost=selection.ADDITIONAL_FRAGMENT_COST,
                 gpu=torch.cuda.get_device_name(),
                 cuda=torch.version.cuda, python=platform.python_version(), torch=torch.__version__,
                 transformers=transformers.__version__, joern=joern_version())
@@ -307,7 +306,8 @@ def fit_method(method, weights, micro, tokenizer, rows, sources, *, edits=None, 
     done = out / "validation.json"
     if done.is_file():
         completed = json.loads(done.read_text())
-        if completed["config"] != config or not (checkpoints / "best.pt").is_file():
+        saved = completed["config"]
+        if saved != with_recorded_names(config,saved) or not (checkpoints / "best.pt").is_file():
             raise ValueError(f"Saved classifier run differs from configuration for {method}")
         return completed
     training = []
@@ -567,12 +567,12 @@ def audit_fill(tokenizer):
         changed_lengths = []
         for original, revised, (_, anchors, _, retained), source in zip(
                 before, after, selected.decisions, sources, strict=True):
-            old_spans = merge(original["simplified_runs"])
+            reference_spans = merge(original["simplified_runs"])
             if (any(str(original[key]) != str(revised[key]) for key in membership)
                     or merge(original["oracle_anchors"]) != anchors
-                    or any(not contains(span, old_spans) for span in retained)):
+                    or any(not contains(span, reference_spans) for span in retained)):
                 raise ValueError(f"{method}: fixed selection differs for {original['sample_key']}")
-            if old_spans != revised["simplified_runs"]:
+            if reference_spans != revised["simplified_runs"]:
                 if len(source.ids) <= BUDGET:
                     raise ValueError(f"{method}: a function inside the budget changed layout")
                 changed_lengths.append(source.raw_bpe)
@@ -700,7 +700,7 @@ def smoke(tokenizer):
         set_seed(SEED)
         model = make_model(tokenizer, "uniform", long_input=True)
         assert model.detector.config.max_position_embeddings - tokenizer.pad_token_id - 1 >= MAX_LENGTH
-        opt = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
+        opt = AdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
         batch = to_gpu(collate_long(data.examples[:micro]), labels=True)
         calls, times = [], []
         handle = model.detector.encoder.register_forward_pre_hook(lambda *args: calls.append(1))

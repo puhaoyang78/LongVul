@@ -24,8 +24,8 @@ from compaction import BUDGET, MAX_LENGTH, REGIONS, PackedData, pack_fixed
 from context_selection import (base_windows, contains, intersects, merge, occupied, prefer_context,
                                related_statements, source_parser, visible_source, write_prediction_rows)
 from locator_quality import CONTEXT_BATCH, load_context_encoder
-from paired import (BACKBONES, BATCH_SIZE, DATA, ROOT, SEED, UNIX_BASE, UNIX_RESULTS, classifier_config,
-                    fit_classifier, load_tokenizer, LOSVERAdamW, predict, prime_source_rows, to_gpu)
+from paired import (AdamW, BACKBONES, BATCH_SIZE, DATA, ROOT, SEED, UNIX_BASE, UNIX_RESULTS, classifier_config,
+                    fit_classifier, load_tokenizer, predict, prime_source_rows, to_gpu, with_recorded_names)
 from predicted_diff import HISTORICAL_REVISION, fp32_classifier, load_sources, paired_annotations
 from region_locator import region_metrics
 from repair_oracle import EDIT_TYPES, GAP_TYPES, grouped_edit_retention, overlap_bpe, raw_runs
@@ -40,7 +40,7 @@ ARCHIVE = ROOT / "results" / "coarse_to_fine_512"
 ARCHIVE_WEIGHTS = ROOT / "checkpoints" / ARCHIVE.name
 VARIABLE_CACHE = ROOT / "checkpoints" / "longvul_adaptive_512" / "blocks"
 BUDGETS = (0,64,96,128)
-METHODS = ("center_context","statement_context","global_fusion","weighted_fusion","final","matched_uniform")
+METHODS = ("center_context","statement_context","global_fusion","weighted_fusion","selected_fusion","matched_uniform")
 
 
 @dataclass(slots=True)
@@ -56,6 +56,7 @@ class SourceSplit:
     cache_read_seconds: float = 0.
     syntax: list | None = None
     aligned: bool = False
+    token_features: torch.Tensor | None = None
 
 
 def source_inputs(split,tokenizer):
@@ -82,7 +83,7 @@ def cuts_for(sources, syntax, aligned):
                 block_ends(len(source.ids),(),(),BLOCK,False) for source in sources]
 
 
-def load_split(split,tokenizer,*,aligned=False,encoder=None):
+def load_split(split,tokenizer,*,aligned=False,encoder=None,token_features=False):
     rows,sources,windows,source_time = source_inputs(split,tokenizer)
     syntax,syntax_time = None,0.
     if encoder is not None:
@@ -91,8 +92,11 @@ def load_split(split,tokenizer,*,aligned=False,encoder=None):
             syntax = source_syntax(sources)
             syntax_time = perf_counter()-started
         ends = cuts_for(sources,syntax,aligned)
-        vectors, encoding = encode_blocks(encoder,sources,tokenizer,windows,ends)
-        return SourceSplit(rows,sources,windows,ends,vectors,encoding,source_time,syntax_time,syntax=syntax,aligned=aligned)
+        states = (torch.empty((sum(len(s.ids) for s in sources),encoder.config.hidden_size),dtype=torch.float16)
+                  if token_features else None)
+        vectors, encoding = encode_blocks(encoder,sources,tokenizer,windows,ends,token_features=states)
+        return SourceSplit(rows,sources,windows,ends,vectors,encoding,source_time,syntax_time,syntax=syntax,
+                           aligned=aligned,token_features=states)
 
     members = [r["sample_key"] for r in rows]
     tokens = torch.from_numpy(np.concatenate([s.ids for s in sources]))
@@ -137,7 +141,9 @@ def source_identity(split):
 
 def score_coarse(model, split, fusion):
     model.eval()
-    loader = DataLoader(BlockData(split.rows,split.ends,split.vectors),batch_size=BATCH_SIZE,collate_fn=collate_blocks)
+    token_features = split.token_features if model.indexer.matching != "block" else None
+    loader = DataLoader(BlockData(split.rows,split.ends,split.vectors,token_features=token_features),
+                        batch_size=BATCH_SIZE,collate_fn=collate_blocks)
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     started = perf_counter()
@@ -502,7 +508,7 @@ def setup(method,seed):
     original = ("center_context","statement_context")
     aligned = method == "statement_context"
     fusion = "original"
-    if method in ("global_fusion","weighted_fusion","final","matched_uniform"):
+    if method in ("global_fusion","weighted_fusion","selected_fusion","matched_uniform"):
         retrieval = valid_winner({m:root/m for m in original},RESULTS/"retrieval_policy.json")
         aligned = retrieval=="statement_context"
         if method in ("global_fusion","weighted_fusion"):
@@ -511,7 +517,7 @@ def setup(method,seed):
             winner = valid_winner({m:root/m for m in (retrieval,"global_fusion","weighted_fusion")},
                                   RESULTS/"fusion_policy.json")
             fusion = winner.removesuffix("_fusion") if winner.endswith("_fusion") else "original"
-    if method == "final" and seed==SEED:
+    if method == "selected_fusion" and seed==SEED:
         return None
     return aligned,fusion,method=="matched_uniform"
 
@@ -525,7 +531,8 @@ def fit_fine(tokenizer,seed,method):
         print("Matched uniform already exists at 60688d2 (same indexer, blocks and fusion)",flush=True)
         return
     context = 0 if uniform else read_json(RESULTS/"budget_policy.json")["selected_context_budget"]
-    area = seed_root(RESULTS,seed)/method
+    record = "final" if method=="selected_fusion" else method
+    area = seed_root(RESULTS,seed)/record
     path = area/"metrics.json"
     config = dict(run_config(method,seed),stage="fine",block_layout="statement32" if aligned else "fixed32",
                   context_budget=context,center_budget=BUDGET-context,
@@ -533,13 +540,14 @@ def fit_fine(tokenizer,seed,method):
                   indexer_checkpoint="statement_index/joint" if aligned else f"60688d2/{historical_index(seed)['name']}",
                   repair_weight=historical_index(seed)["weight"],coarse_frozen=True,fusion=fusion)
     if path.is_file():
-        if read_json(path)["config"] != config:
+        saved = read_json(path)["config"]
+        if saved != with_recorded_names(config,saved):
             raise ValueError(f"Different experiment configuration at {path}")
         return
     if aligned:
         fit_indexer(tokenizer,seed)
     index = load_index(seed,aligned)
-    return fit_frozen_fine(tokenizer,index,config,area,seed_root(WEIGHTS,seed)/method,uniform=uniform)
+    return fit_frozen_fine(tokenizer,index,config,area,seed_root(WEIGHTS,seed)/record,uniform=uniform)
 
 
 def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None):
@@ -548,7 +556,7 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     path = area/"metrics.json"
     if path.is_file():
         result = read_json(path)
-        if result["config"] != config:
+        if result["config"] != with_recorded_names(config,result["config"]):
             raise ValueError(f"Different experiment configuration at {path}")
         return result
     if any(p.requires_grad for p in index.parameters()):
@@ -580,7 +588,8 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     encoder = load_context_encoder().requires_grad_(False)
     torch.cuda.synchronize()
     started = perf_counter()
-    split = load_split("test",tokenizer,aligned=aligned,encoder=encoder)
+    split = load_split("test",tokenizer,aligned=aligned,encoder=encoder,
+                       token_features=index.indexer.matching != "block")
     features,ranks,scoring = score_coarse(index,split,fusion)
     data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform)
     scores,fine = predict_fine(model,data)
@@ -625,7 +634,7 @@ def smoke(tokenizer):
         query = index.indexer.query.weight
         joint_norm = float(query.grad.norm())
         before = query.detach().clone()
-        opt = LOSVERAdamW(index.parameters(),lr=2e-5)
+        opt = AdamW(index.parameters(),lr=2e-5)
         opt.step()
         if bce_norm<=0 or joint_norm<=0 or torch.equal(query,before):
             raise ValueError("Task + Repair indexer did not receive gradients and update")
@@ -638,7 +647,7 @@ def smoke(tokenizer):
         fusion_gradient = float(model.fusion.weight.grad.norm())
         if not math.isfinite(fusion_gradient) or fusion_gradient<=0 or features.requires_grad:
             raise ValueError("Fine encoder did not receive a valid gradient")
-        LOSVERAdamW(model.parameters(),lr=2e-5).step()
+        AdamW(model.parameters(),lr=2e-5).step()
         # Changing partner only cannot affect this function's own packed input.
         single = SourceSplit(rows[:1],sources[:1],windows[:1],ends[:1],bank[:len(ends[0])],{},0.)
         direct,_ = fine_data(single,features[:1],ranks[:1],tokenizer,96)

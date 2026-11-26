@@ -18,7 +18,7 @@ import coarse_to_fine as center
 from coarse_encoding import BlockData, collate_blocks
 from coarse_retrieval import uniform_layout
 from context_selection import merge, visible_source, write_prediction_rows
-from diagnostics.next_stage import baseline_path, part_shares
+from diagnostics.training_diagnosis import baseline_path, part_shares
 from locator_quality import context_encoder_batches, load_context_encoder
 from paired import BATCH_SIZE, ROOT, SEED, UNIX_BASE, fit_classifier, load_tokenizer, predict, to_gpu
 from predicted_diff import paired_annotations

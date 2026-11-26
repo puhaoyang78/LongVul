@@ -99,13 +99,13 @@ class SourceAndDependenciesTest(unittest.TestCase):
             text = "".join(lines)
             return map_edits(lines, [(i, i+1) for i in range(len(text))], diff, side), text
 
-        old, old_text = map_text(left, 0)
-        new, new_text = map_text(right, 1)
-        self.assertEqual([old_text[a:b] for a, b in old["delete"]], ["old\n"])
-        self.assertEqual([old_text[a:b] for a, b in old["replace"]], ["before\n"])
-        self.assertEqual([new_text[a:b] for a, b in new["insert"]], ["inserted\n"])
-        self.assertEqual([old_text[a:b] for a, b in old["insert_gap"]], ["end\n"])
-        self.assertEqual([new_text[a:b] for a, b in new["delete_gap"]], ["start\nkeep\n"])
+        before_edits, before_text = map_text(left, 0)
+        after_edits, after_text = map_text(right, 1)
+        self.assertEqual([before_text[a:b] for a, b in before_edits["delete"]], ["old\n"])
+        self.assertEqual([before_text[a:b] for a, b in before_edits["replace"]], ["before\n"])
+        self.assertEqual([after_text[a:b] for a, b in after_edits["insert"]], ["inserted\n"])
+        self.assertEqual([before_text[a:b] for a, b in before_edits["insert_gap"]], ["end\n"])
+        self.assertEqual([after_text[a:b] for a, b in after_edits["delete_gap"]], ["start\nkeep\n"])
 
     def test_joern_column_is_utf16_and_lines_are_physical(self):
         code = "a😀z;\r\nx = 3;\r\n"

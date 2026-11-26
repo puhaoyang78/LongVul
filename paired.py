@@ -19,17 +19,19 @@ from transformers import AutoConfig, RobertaModel, get_linear_schedule_with_warm
 import context_selection as context
 import repair_oracle as repair
 from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, collate, prepare_function
-from csp_model import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, CompactionClassifier, pack
+from region_selection import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, RegionSelectionClassifier, pack_selected_windows
 from window_inputs import BASE, DATA, ROOT, grouped_metrics, seed_path
-from rgcl.artifacts import write_json
+from rgcl.artifacts import read_json, write_json
 from rgcl.config import ADAM_EPSILON, BACKBONES, BATCH_SIZE, EPOCHS, LEARNING_RATE, MAX_GRAD_NORM, MAX_LENGTH, SEEDS, WARMUP_FRACTION
 from rgcl.data import prime_source_rows
 from rgcl.metrics import metrics
 from rgcl.model import Detector, build_model, load_tokenizer
-from rgcl.training import LOSVERAdamW, load_training_state, restore_rng, save_training_state
+from rgcl.training import LOSVERAdamW as AdamW, load_training_state, restore_rng, save_training_state
 
 SEED = 42
-METHODS = {"ab": (True, False), "ac": (False, True), "abc": (True, True)}
+METHODS = {"learned_selection": (True,False), "source_positions": (False,True),
+           "learned_selection_with_positions": (True,True)}
+REGION_SELECTION_RECORDS = dict(learned_selection="ab", source_positions="ac", learned_selection_with_positions="abc")
 RESULTS = ROOT / "results" / "csp"
 WEIGHTS = ROOT / "checkpoints" / "csp"
 UNIX_BASE = BASE.with_name("unixcoder-base-nine")
@@ -57,7 +59,7 @@ def make_model(tokenizer, method, *, long_input=False, pretrained=True):
         base = Detector(encoder, config, "plm_classifier", 1.)
     else:
         base = build_model(backbone, "plm_classifier", model_source=source, pretrained=pretrained)
-    return CompactionClassifier(base, tokenizer, select_windows=select_windows, use_positions=use_positions).cuda()
+    return RegionSelectionClassifier(base, tokenizer, select_windows=select_windows, use_positions=use_positions).cuda()
 
 
 def to_gpu(batch, *, labels=False):
@@ -166,11 +168,11 @@ def smoke(tokenizer):
     data = CompactData("train", tokenizer, alternatives=True)
     longest = sorted(range(len(data)), key=lambda i: data.metadata[i]["original_bpe"], reverse=True)[:BATCH_SIZE]
     batch = to_gpu(collate([data[i] for i in longest]), labels=True)
-    model = make_model(tokenizer, "abc")
+    model = make_model(tokenizer, "learned_selection_with_positions")
     base = model.detector
     windows = batch["bank"]
     fixed = torch.zeros_like(windows[-1][..., 0, 0], dtype=torch.long)
-    packed = pack(*windows, fixed, model.special)
+    packed = pack_selected_windows(*windows, fixed, model.special)
     for derived, reference in zip(packed[:5], (*batch["fixed"].unbind(1), batch["lengths"], batch["uniform"]), strict=True):
         if not torch.equal(derived, reference):
             raise ValueError("candidate 0 differs from Uniform-4 packing")
@@ -206,7 +208,7 @@ def smoke(tokenizer):
     if not math.isfinite(out["loss"].item()) or not all(math.isfinite(v) and v > 0. for v in norms.values()):
         raise ValueError(f"invalid BCE gradients on real long functions: {norms}")
     saved = [p.detach().clone() for p in checked.values()]
-    optimizer = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
+    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
     torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM, error_if_nonfinite=True)
     optimizer.step()
     if any(torch.equal(p, before) for p, before in zip(checked.values(), saved, strict=True)):
@@ -218,7 +220,7 @@ def smoke(tokenizer):
                   loss=out["loss"].item(), bce_gradient_norms=norms,
                   peak_allocated_bytes=torch.cuda.max_memory_allocated())
     write_json(RESULTS / "smoke.json", result)
-    print("CSP smoke passed", result["functions"][0], norms, round(result["peak_allocated_bytes"]/2**30, 3), flush=True)
+    print("Region selection smoke passed", result["functions"][0], norms, round(result["peak_allocated_bytes"]/2**30, 3), flush=True)
 
 
 def smoke_context(tokenizer):
@@ -387,15 +389,18 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
     weights.mkdir(parents=True, exist_ok=True)
     train_loader = DataLoader(train, batch_size=micro_batch, shuffle=True, collate_fn=collator)
     valid_loader = DataLoader(valid, batch_size=micro_batch, collate_fn=collator)
-    optimizer = LOSVERAdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
+    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, eps=ADAM_EPSILON)
     per_epoch = math.ceil(len(train) / BATCH_SIZE)
     steps = per_epoch * epochs
     schedule = get_linear_schedule_with_warmup(optimizer, steps*WARMUP_FRACTION, steps)
-    write_json(root / "config.json", config)
+    recorded_config = config
     history = []
     if (weights / "last.pt").exists():
-        history, rng = load_training_state(weights, model, optimizer, config, scheduler=schedule)
+        recorded_config = with_recorded_names(config,read_json(root / "config.json"))
+        history, rng = load_training_state(weights, model, optimizer, recorded_config, scheduler=schedule)
         restore_rng(rng)
+    else:
+        write_json(root / "config.json", config)
     best = max((row["validation"]["mcc"] for row in history), default=-math.inf)
     for epoch in range(len(history)+1, (stop_after or epochs)+1):
         if before_epoch is not None:
@@ -419,7 +424,7 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
                             training_seconds=seconds, validation_seconds=valid_seconds))
         if after_epoch is not None:
             history[-1].update(after_epoch(model,epoch))
-        save_training_state(weights, model, optimizer, config, history, scheduler=schedule)
+        save_training_state(weights, model, optimizer, recorded_config, history, scheduler=schedule)
         write_json(root / "epochs.json", history)
         print(root.name, epoch, f"loss={train_stats['train_loss']:.5f} valid_mcc={validation['mcc']:.4f} train_s={seconds:.1f}",
               flush=True)
@@ -431,10 +436,29 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
     return selected, history
 
 
+def with_recorded_names(config,recorded):
+    """Use the archived labels when validating an existing configuration or checkpoint."""
+    expected = dict(config)
+    if recorded.get("optimizer")=="LOSVERAdamW" and expected.get("optimizer")=="AdamW":
+        expected["optimizer"] = "LOSVERAdamW"
+    for current,archived in (
+        ("additional_fragment_cost","new_fragment_cost"),
+        ("index_training_epochs","new_index_training_epochs"),
+    ):
+        if archived in recorded and current in expected:
+            expected[archived] = expected.pop(current)
+    method = expected.get("method")
+    if method in REGION_SELECTION_RECORDS or method=="selected_fusion":
+        archived = REGION_SELECTION_RECORDS[method] if method in REGION_SELECTION_RECORDS else "final"
+        if recorded.get("method")==archived:
+            expected["method"] = archived
+    return expected
+
+
 def classifier_config(method):
     source = UNIX_BASE if method in UNIX_METHODS else BASE
     return dict(method=method, seed=SEED, epochs=EPOCHS, batch_size=BATCH_SIZE, length=MAX_LENGTH,
-                lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="LOSVERAdamW", weight_decay=0.,
+                lr=LEARNING_RATE, eps=ADAM_EPSILON, optimizer="AdamW", weight_decay=0.,
                 warmup=WARMUP_FRACTION, grad_clip=MAX_GRAD_NORM, precision="fp32 eager",
                 model=str(source), loss="function BCE", class_weight=1., threshold=.5, comparison=">",
                 selection="highest full validation MCC, earliest tie", gpu=torch.cuda.get_device_name(),
@@ -452,7 +476,7 @@ def fit_512_inputs(tokenizer, datasets, root, weights, *, method, seed, configur
                   split_functions={split: len(data) for split,data in datasets.items()}, **configuration)
     if (root / "metrics.json").is_file():
         result = json.loads((root / "metrics.json").read_text())
-        if result["config"] != config:
+        if result["config"] != with_recorded_names(config,result["config"]):
             raise ValueError(f"Mismatched experiment configuration in {root}")
         return result
     set_seed(seed)
@@ -494,8 +518,9 @@ def run(method, tokenizer, *, seed=SEED):
         root = seed_path(ROOT/"results"/"paired"/"uniform4",seed)
         weights = seed_path(ROOT/"checkpoints"/"paired"/"uniform4",seed)
     else:
-        root = seed_path((ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS)/method,seed)
-        weights = seed_path((ORACLE_WEIGHTS if privileged else UNIX_WEIGHTS if unixcoder else WEIGHTS)/method,seed)
+        archive_key = REGION_SELECTION_RECORDS.get(method, method)
+        root = seed_path((ORACLE_RESULTS if privileged else UNIX_RESULTS if unixcoder else RESULTS)/archive_key,seed)
+        weights = seed_path((ORACLE_WEIGHTS if privileged else UNIX_WEIGHTS if unixcoder else WEIGHTS)/archive_key,seed)
     if (root / "metrics.json").exists():
         print(method, "already complete", flush=True)
         return

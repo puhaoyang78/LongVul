@@ -97,7 +97,7 @@ class WindowData:
     def __len__(self):
         return len(self.metadata)
 
-    def new_counters(self):
+    def empty_counters(self):
         return np.zeros((len(self), len(COUNTERS)), dtype=np.int64)
 
     def batch(self, indices, limit, counters, *, training=False):

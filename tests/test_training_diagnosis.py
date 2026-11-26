@@ -7,15 +7,25 @@ import numpy as np
 import torch
 
 from context_selection import occupied
-from diagnostics.next_stage import auxiliary_weights, outside_layout, threshold_row, valid_threshold
+from diagnostics.training_diagnosis import auxiliary_weights, outside_layout, threshold_row, valid_threshold
 from diagnostics.representations import AttentionProbe, compact_positions, shuffled_blocks
 from coarse_encoding import CoarseClassifier
-from paired import LOSVERAdamW
+from paired import AdamW, with_recorded_names
 from transformers import RobertaConfig
 from window_inputs import seed_path
 
 
 class DiagnosticTests(unittest.TestCase):
+    def test_archived_names_preserve_optimizer_and_configuration_values(self):
+        current = dict(optimizer="AdamW",method="learned_selection",lr=2e-5,
+                       quotas=(128,127,128,127),additional_fragment_cost=8)
+        recorded = dict(optimizer="LOSVERAdamW",method="ab",lr=1e-5,
+                        quotas=[128,127,128,127],new_fragment_cost=8)
+        expected = with_recorded_names(current,recorded)
+        self.assertEqual(expected,dict(optimizer="LOSVERAdamW",method="ab",lr=2e-5,
+                                       quotas=(128,127,128,127),new_fragment_cost=8))
+        self.assertEqual(current["optimizer"],"AdamW")
+
     def test_baseline_root_preserves_existing_seed42(self):
         path = Path("results/sea")
         self.assertEqual(seed_path(path,42),path)
@@ -48,10 +58,10 @@ class DiagnosticTests(unittest.TestCase):
         self.assertAlmostEqual(actual,max(threshold_row(y,p,t)["mcc"] for t in candidates))
         self.assertEqual(valid_threshold([0,1],[.42,.42]),.5)
 
-    def test_losver_first_update_matches_epsilon_before_bias_correction(self):
+    def test_adamw_first_update_matches_epsilon_before_bias_correction(self):
         param = torch.nn.Parameter(torch.tensor([1.,-2.],dtype=torch.float64))
         grad = torch.tensor([1e-6,-3e-6],dtype=torch.float64)
-        opt = LOSVERAdamW([param],lr=2e-5,eps=1e-8)
+        opt = AdamW([param],lr=2e-5,eps=1e-8)
         param.grad = grad
         expected = param.detach()-2e-5*math.sqrt(.001)/.1*(.1*grad)/((.001*grad.square()).sqrt()+1e-8)
         opt.step()

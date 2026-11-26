@@ -12,7 +12,7 @@ POSITION_BINS = 64
 DISTANCE_BINS = 33
 
 
-def pack(bank_ids, source_positions, specs, choices, special):
+def pack_selected_windows(bank_ids, source_positions, specs, choices, special):
     cls, sep, pad = special
     functions = torch.arange(len(choices), device=choices.device)[:, None]
     regions = torch.arange(REGIONS, device=choices.device)[None, :]
@@ -47,7 +47,7 @@ def position_features(original, parts, spans, raw):
     return tuple(x.masked_fill(~active, 0) for x in (relative, parts, boundary, gap_bins))
 
 
-class CompactionClassifier(nn.Module):
+class RegionSelectionClassifier(nn.Module):
     def __init__(self, detector, tokenizer, *, select_windows, use_positions):
         super().__init__()
         self.detector = detector
@@ -86,13 +86,13 @@ class CompactionClassifier(nn.Module):
                 chosen = weight.argmax(-1)
             else:
                 chosen = logits.argmax(-1)
-            new_ids, new_pos, new_parts, new_length, new_spans, order = pack(bank_ids, positions, spec, chosen, self.special)
+            selected_ids, selected_positions, selected_parts, selected_lengths, selected_spans, order = pack_selected_windows(bank_ids, positions, spec, chosen, self.special)
             choose_index = batch["indices"]
-            ids = ids.index_copy(0, choose_index, new_ids.long())
-            originals = originals.index_copy(0, choose_index, new_pos.long())
-            parts = parts.index_copy(0, choose_index, new_parts)
-            lengths = lengths.index_copy(0, choose_index, new_length)
-            spans = spans.index_copy(0, choose_index, new_spans)
+            ids = ids.index_copy(0, choose_index, selected_ids.long())
+            originals = originals.index_copy(0, choose_index, selected_positions.long())
+            parts = parts.index_copy(0, choose_index, selected_parts)
+            lengths = lengths.index_copy(0, choose_index, selected_lengths)
+            spans = spans.index_copy(0, choose_index, selected_spans)
             choices = choices.index_copy(0, choose_index, chosen)
             if self.training:
                 # Keep the exact selected word embeddings in forward. Only this
@@ -101,7 +101,7 @@ class CompactionClassifier(nn.Module):
                 delta = (delta @ values.flatten(-2)).squeeze(-2).reshape(-1, REGIONS, WIDTH, table.embedding_dim)
                 delta = F.pad(F.pad(delta, (0, 0, 0, 1)).flatten(1, 2), (0, 0, 1, 1))
                 residual = delta.gather(1, order[..., None].expand(-1, -1, table.embedding_dim))
-                residual = residual.masked_fill(new_pos.lt(0)[..., None], 0.)
+                residual = residual.masked_fill(selected_positions.lt(0)[..., None], 0.)
 
         attention = torch.arange(ids.shape[1], device=ids.device)[None, :].lt(lengths[:, None]).long()
         if self.position is None and residual is None:

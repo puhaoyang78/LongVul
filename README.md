@@ -2,6 +2,30 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## 细粒度索引与粗到细编码
+
+在相同 32 BPE 中心块、96 位置关联上下文、512 位置精细预算和 Global Fusion 上，比较块级匹配、Token 匹配取均值、Token 匹配取 LogMeanExp。每个种子的全局辅助头、Q/K、精细分类器均重新训练。各组使用相同的原始 UniXcoder 冻结编码和 16 轮精细训练协议。索引器使用函数级 BCE 加权重为 1 的块级修复 KL。Test 预测只访问当前函数，配对 Diff 用于预测后的诊断。[机制报告与两个源码案例](results/fine_indexing_512/report.md) · [逐轮结果与逐样本预测](results/fine_indexing_512/)
+
+Seed 42 按完整 Valid MCC 从两种 Token 匹配中选出均值聚合。三个种子的整体 Test MCC 为块匹配 **0.1065 ± 0.0158**、Token 均值 **0.0821 ± 0.0213**。统一 CodeBERT >510 组为 **0.1007 ± 0.0259** 和 **0.0636 ± 0.0224**。LogMeanExp 在 Seed 42 的 ROC-AUC 高约 0.0092，但最稀疏修改块的命中率更低，整体固定阈值 MCC 也低于块匹配。Test 端到端耗时三种子均值为 34.86 秒和 40.50 秒。正式配置保留块匹配。[完整两种长度口径及成本](results/fine_indexing_512/summary.json)
+
+项目训练代码将优化器统一称为 AdamW，继续调用 RGCL 提供的 Transformers 4.19 更新规则，ε 加在未做偏差修正的二阶矩平方根后，解耦权重衰减应用在自适应更新之后。历史结果和检查点配置保留原有名称，载入时核对原记录。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" index_matching.py smoke
+"$PYTHON" index_matching.py cache
+for matching in block token_mean token_logmeanexp; do
+    "$PYTHON" index_matching.py run --seed 42 --matching "$matching"
+done
+MATCHING=$("$PYTHON" index_matching.py choose)
+for seed in 1234 123456; do
+    "$PYTHON" index_matching.py run --seed "$seed" --matching block
+    "$PYTHON" index_matching.py run --seed "$seed" --matching "$MATCHING"
+done
+"$PYTHON" index_matching.py report
+```
+
 ## 三种子外部基线与冻结表示诊断
 
 StagedVulBERT、SEA、VulnScout 和 CodeBERT Uniform-4 的补充种子使用各自原有训练协议。统一按完整原始 CodeBERT BPE 分层，Test 的 ≤510、511–1020、1021–2040 和 ≥2041 组分别有 305、242、235 和 346 个函数。配对指标按两侧较长函数归组。Uniform-4 Seed 42 来自 `e094c1e`，当时保存的索引和标签经顺序核对后对应到官方 `sample_key`。[统一分层结果](results/baseline_completion/) · [机制报告](results/next_stage_diagnosis/report.md) · [冻结表示实验](results/representation_diagnosis/)
@@ -24,15 +48,15 @@ MCC 为三个种子的均值 ± 样本标准差。LongVul 整体、长组相对�
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4 TOKENIZERS_PARALLELISM=true
 PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
-"$PYTHON" -m diagnostics.next_stage --stage cpu
+"$PYTHON" -m diagnostics.training_diagnosis --stage cpu
 for seed in 1234 123456; do
     "$PYTHON" stagedvulbert.py --seed "$seed"
     "$PYTHON" window_baselines.py sea --seed "$seed"
     "$PYTHON" paired.py codebert_uniform4 --seed "$seed"
     "$PYTHON" window_baselines.py vulnscout --seed "$seed"
 done
-"$PYTHON" -m diagnostics.next_stage --stage gpu
-"$PYTHON" -m diagnostics.next_stage --stage report
+"$PYTHON" -m diagnostics.training_diagnosis --stage gpu
+"$PYTHON" -m diagnostics.training_diagnosis --stage report
 "$PYTHON" -m diagnostics.representations
 "$PYTHON" -m unittest discover -s tests -v
 ```
@@ -182,8 +206,8 @@ PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
 "$PYTHON" coarse_to_fine.py --stage budget
 "$PYTHON" coarse_to_fine.py --stage fine --seed 42 --methods center_context statement_context
 "$PYTHON" coarse_to_fine.py --stage fine --seed 42 --methods global_fusion weighted_fusion
-"$PYTHON" coarse_to_fine.py --stage fine --seed 1234 --methods final
-"$PYTHON" coarse_to_fine.py --stage fine --seed 123456 --methods final
+"$PYTHON" coarse_to_fine.py --stage fine --seed 1234 --methods selected_fusion
+"$PYTHON" coarse_to_fine.py --stage fine --seed 123456 --methods selected_fusion
 for seed in 42 1234 123456; do
     "$PYTHON" coarse_to_fine.py --stage fine --seed "$seed" --methods matched_uniform
 done
@@ -212,7 +236,7 @@ LongVul 先编码完整函数，再在 512 个位置内精细编码所检索的�
 | Full LongVul | 同 Context Retrieval，加入分类排序反馈 | 中心与关联上下文 |
 | Global + Uniform | 与 Full 匹配的架构、初始索引器和精细训练轮数 | 历史居中均匀采样 |
 
-Context Retrieval 与 Full 从相同的第 8 轮模型、优化器和调度状态继续训练。另用 Full 的同一检查点及每个函数的同一组 `g`、`z_g` 将精细输入替换成均匀布局，直接测量检索差异。各组沿用 batch 8、LOSVERAdamW、学习率 2e-5、10% 预热和统一的 Valid MCC 选模。补充种子复跑 Context Retrieval、Full 和 Global + Uniform。历史 Diff 用于 Train 监督、Valid 诊断和策略选择，以及保存预测后的 Test 诊断。Test 编码和检索仅访问当前函数源码。
+Context Retrieval 与 Full 从相同的第 8 轮模型、优化器和调度状态继续训练。另用 Full 的同一检查点及每个函数的同一组 `g`、`z_g` 将精细输入替换成均匀布局，直接测量检索差异。各组沿用 batch 8、AdamW、学习率 2e-5、10% 预热和统一的 Valid MCC 选模。补充种子复跑 Context Retrieval、Full 和 Global + Uniform。历史 Diff 用于 Train 监督、Valid 诊断和策略选择，以及保存预测后的 Test 诊断。Test 编码和检索仅访问当前函数源码。
 
 512 是精细分支的位置上限。端到端成本还包含完整函数的多窗口编码。程序按阶段记录分词、语法解析、块汇聚、跨块交互、索引、检索与精细编码，分别统计真实编码位置、padding、批量前向和排序反馈训练成本。以下命令在 `3a82c39` 的历史工作树中运行。
 
@@ -399,14 +423,14 @@ LongVul 按函数长度建立最多六个空间区间，先保留各区可容纳
 | Oracle-Diff+PDG-Weighted | 在训练和完整验证集比较 `(1,1)`、`(1,2)`、`(2,1)`。Test 仅报告胜出配置及预先登记的等权对照。 |
 | Predicted Region / LongVul | 共享区域预测与全局覆盖，LongVul 加入按 Valid 选中的 PDG 权重。 |
 
-正式单函数预测写入后才计算 Test 的真实差异，用于保留率、定位器诊断和特权 Oracle。模型沿用原 UniXcoder-base-nine 的 1,026 行位置表和 RGCL 分类头。所有 1,024 位置分类器使用 BF16 autocast、FP32 参数、SDPA、函数级 BCE、LOSVERAdamW、16 轮、有效 batch 8 和学习率 2e-5。区域定位器和分类器各自保存最优权重。`run` 和 `predict` 使用本轮检查点对应的填充策略。
+正式单函数预测写入后才计算 Test 的真实差异，用于保留率、定位器诊断和特权 Oracle。模型沿用原 UniXcoder-base-nine 的 1,026 行位置表和 RGCL 分类头。所有 1,024 位置分类器使用 BF16 autocast、FP32 参数、SDPA、函数级 BCE、AdamW、16 轮、有效 batch 8 和学习率 2e-5。区域定位器和分类器各自保存最优权重。`run` 和 `predict` 使用本轮检查点对应的填充策略。
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
 PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
-"$PYTHON" longvul.py smoke
-"$PYTHON" longvul.py run
-"$PYTHON" longvul.py predict --source function.cpp
+"$PYTHON" dependency_experiment.py smoke
+"$PYTHON" dependency_experiment.py run
+"$PYTHON" dependency_experiment.py predict --source function.cpp
 ```
 
 ### PrimeVul_original 正式结果
@@ -442,7 +466,7 @@ LongVul 的整体 MCC 和两项 AUC 高于两个单函数基线。其 F1 低于�
 
 在正式实验收尾后，沿用仓库中的双向扩展实现。填充优先补全已选 AST 语句或控制头，边界不可靠时补全物理行。只在尚未覆盖的位置区间少量引入完整单元。其余预算轮流扩展现有片段，合并后的 BPE 与内部 SEP 按实际占用计算。已选实际修改、预测区和程序依赖范围均由区间并集保留。
 
-`longvul.py audit-fill` 使用相同 Test 样本、定位器、已选范围和 Joern 缓存比较两种填充。两组各 1,128 个函数均保留了填充前的全部区域，最大输入均为 1,024 位置。在 >1022 BPE 的 477 个函数上测得以下变化。正式分类结果来自原输入构造。[本轮正式实验版本](https://github.com/puhaoyang78/LongVul/commit/25af2a869d5434540ed049a294a24fd67f70b068)
+`dependency_experiment.py audit-fill` 使用相同 Test 样本、定位器、已选范围和 Joern 缓存比较两种填充。两组各 1,128 个函数均保留了填充前的全部区域，最大输入均为 1,024 位置。在 >1022 BPE 的 477 个函数上测得以下变化。正式分类结果来自原输入构造。[本轮正式实验版本](https://github.com/puhaoyang78/LongVul/commit/25af2a869d5434540ed049a294a24fd67f70b068)
 
 | 方法 | 平均片段数 | 平均片段长度 | 中位片段长度 | 内部 SEP 总数 | 原始 BPE 覆盖率 | 平均覆盖的源码四分区数 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -452,13 +476,13 @@ LongVul 的整体 MCC 和两项 AUC 高于两个单函数基线。其 F1 低于�
 长组实际修改 BPE 保留率在加权 Oracle 中为 81.66%（两种填充相同），在 LongVul 中从 44.85% 降至 44.63%。全 Test 中 LongVul 的成对输入碰撞从 13 增至 16，Oracle 维持 0。连续填充在本轮只做输入验证。详细分层、语句完整性和依赖覆盖见 [`continuous_fill.json`](results/longvul1024/continuous_fill.json)。
 
 ```bash
-"$PYTHON" longvul.py audit-fill
+"$PYTHON" dependency_experiment.py audit-fill
 "$PYTHON" -m unittest discover -s tests -v
 ```
 
 ## 512 位置语法区域选择与源码压缩
 
-两个实验独立使用 PrimeVul_original 原始划分和历史 Uniform Sampling 的四区居中填充。分类器均使用 UniXcoder-base-nine 的一次 FP32 Eager 前向、独立函数 BCE、16 轮、batch 8、学习率 2e-5、LOSVERAdamW 和 10% 线性预热。以完整 Valid 的 MCC 选模，并列取最早轮。正类阈值固定为 `p > 0.5`。长度分层和修改保留率按未经压缩的 UniXcoder BPE 统计。[历史实验版本](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)
+两个实验独立使用 PrimeVul_original 原始划分和历史 Uniform Sampling 的四区居中填充。分类器均使用 UniXcoder-base-nine 的一次 FP32 Eager 前向、独立函数 BCE、16 轮、batch 8、学习率 2e-5、AdamW 和 10% 线性预热。以完整 Valid 的 MCC 选模，并列取最早轮。正类阈值固定为 `p > 0.5`。长度分层和修改保留率按未经压缩的 UniXcoder BPE 统计。[历史实验版本](https://github.com/puhaoyang78/LongVul/commit/9d9536371b20ae3ea445254d8b4a4a6f36e252e1)
 
 ### 修复引导的语法区域
 
@@ -580,7 +604,7 @@ PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
 
 超预算时扣除间隔位置，完整保留可容纳的短块，并由较大的块均分剩余正文位置，块内居中保留 BPE。可容纳的块数不足时沿源码顺序等距选择。两组共用同一映射和分配过程，输入只含各自函数的 token 和通用特殊 token。补充语法关系的打分沿用条件头 3、声明和赋值 2 的权重及新增位置成本。简化后能放下的函数保留全部正文。修复区统计采用原始 BPE 分母，插入或删除发生时无对应修改行一侧的邻近行单独统计。
 
-两组各训练一个独立函数分类器。沿用同一 UniXcoder-base-nine、单次编码、BCE、种子 42、16 轮、batch 8、学习率 2e-5、LOSVERAdamW、10% 线性预热、验证 MCC 选模和固定阈值。比较使用已经保存的 Uniform Sampling 和 Context-Aware Selection 预测。配置、逐轮指标和逐样本结果保存在 `results/unixcoder_repair_oracle/`，检查点保存在服务器 `checkpoints/unixcoder_repair_oracle/`。
+两组各训练一个独立函数分类器。沿用同一 UniXcoder-base-nine、单次编码、BCE、种子 42、16 轮、batch 8、学习率 2e-5、AdamW、10% 线性预热、验证 MCC 选模和固定阈值。比较使用已经保存的 Uniform Sampling 和 Context-Aware Selection 预测。配置、逐轮指标和逐样本结果保存在 `results/unixcoder_repair_oracle/`，检查点保存在服务器 `checkpoints/unixcoder_repair_oracle/`。
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
@@ -658,7 +682,7 @@ PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
 
 定位器固定后，仅在 Valid 上比较每函数最多 4 或 8 个预测区域，以及 127、191 或 255 个优先位置。以简化后确实需要选段的 Valid 函数中，打包后的原始修改 BPE 保留率为准，并列时优先采用较小预算及较少区域。每个需要选段的函数至少给均匀填充留出 255 个正文及间隔位置。Train、Valid、Test 分类输入均使用该定位器和固定规则，只读取当前函数。Test 的真实差异在分类预测写入后用于诊断。
 
-分类器沿用历史 FP32 Eager UniXcoder-base-nine、独立函数 BCE、种子 42、16 轮、batch 8、学习率 2e-5、LOSVERAdamW 和 10% 预热。模型按完整 Valid MCC 选择，分类阈值固定 `p > 0.5`。
+分类器沿用历史 FP32 Eager UniXcoder-base-nine、独立函数 BCE、种子 42、16 轮、batch 8、学习率 2e-5、AdamW 和 10% 预热。模型按完整 Valid MCC 选择，分类阈值固定 `p > 0.5`。
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
@@ -756,7 +780,7 @@ Valid 长组在 0% 同预算 Oracle 下保留 60.38% 的真实修改 BPE。历�
 
 ## UniXcoder 上下文感知选择
 
-三组都使用 RGCL 的 UniXcoder、CLS + `RobertaClassificationHead` 和函数级 BCE，每批只调用一次编码器。训练采用 16 轮、batch 8、学习率 2e-5、LOSVERAdamW、10% 线性预热、梯度裁剪 1 和 FP32 eager。模型与 tokenizer 从同一固定版本的本地目录加载。[UniXcoder 固定版本](https://huggingface.co/microsoft/unixcoder-base-nine/tree/5f0dc256eb0904af496d427451da5d7f90261676)
+三组都使用 RGCL 的 UniXcoder、CLS + `RobertaClassificationHead` 和函数级 BCE，每批只调用一次编码器。训练采用 16 轮、batch 8、学习率 2e-5、AdamW、10% 线性预热、梯度裁剪 1 和 FP32 eager。模型与 tokenizer 从同一固定版本的本地目录加载。[UniXcoder 固定版本](https://huggingface.co/microsoft/unixcoder-base-nine/tree/5f0dc256eb0904af496d427451da5d7f90261676)
 
 | 方法 | 正文选择 |
 | --- | --- |
@@ -834,7 +858,7 @@ PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
 
 ## Compaction–Selection–Position Encoding
 
-Uniform-4 的历史测试 MCC 在整体、>510 BPE 和 ≥2,041 BPE 上分别为 0.1015、0.0967 和 0.0660。本实验复用该次结果，并训练 A+B、A+C、A+B+C 三组。各组沿用 16 轮、batch 8、学习率 2e-5、LOSVERAdamW、10% 线性预热、梯度裁剪 1、FP32 eager 和函数级 BCE。[Uniform-4 原始结果](https://github.com/puhaoyang78/LongVul/tree/e094c1ef8bd5e56b08f154a416f89a9eb9c3ecf6/results/paired/uniform4)
+Uniform-4 的历史测试 MCC 在整体、>510 BPE 和 ≥2,041 BPE 上分别为 0.1015、0.0967 和 0.0660。本实验复用该次结果，并训练 A+B、A+C、A+B+C 三组。各组沿用 16 轮、batch 8、学习率 2e-5、AdamW、10% 线性预热、梯度裁剪 1、FP32 eager 和函数级 BCE。[Uniform-4 原始结果](https://github.com/puhaoyang78/LongVul/tree/e094c1ef8bd5e56b08f154a416f89a9eb9c3ecf6/results/paired/uniform4)
 
 - **A，候选窗口。** 复用 Uniform-4 的缩进处理、行边界与超长行切点。保留原始 BPE 索引。原始正文 ≤510 BPE 的函数原样打包，压缩后能完整放入的长函数保留全部压缩正文。其余函数按齐行后的四个位置区间分配 126/127/127/127 个正文位置。每区保留历史中心窗口，并在可用起点范围上等距取七个锚点，吸附到相邻代码边界、按窗口去重，每区最多八个。四区按源码顺序拼接，遇到压缩序列中的间隔时插入一个 EOS。
 - **B，可学习选择。** 候选评分读取 CodeBERT 输入词表，依次经过宽度 3、16 通道的 1D CNN、GELU、对有效位置的均值池化和 MLP。训练使用温度 1 的 Straight-Through Gumbel-Softmax，每区前向只使用一个实际窗口。反向把损失梯度传给对齐到同一区内槽位的候选词向量混合，词向量在这条近似路径上停止梯度。CodeBERT 从实际保留的词向量正常更新。推理使用分数 argmax，同分取靠前候选，0 号为历史中心窗口。每个函数最多查表 4×8×127 个候选槽位，随后进行一次 512 位置的 CodeBERT 编码。[Straight-Through Gumbel-Softmax](https://arxiv.org/abs/1611.01144)
@@ -893,8 +917,8 @@ A+B 和 A+B+C 在 750 个可改选长函数上分别改选了 740 和 739 个。
 conda activate vul-detect
 export CUDA_VISIBLE_DEVICES=0 PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1
 export RAYON_NUM_THREADS=6 TOKENIZERS_PARALLELISM=true
-python -u paired.py abc --smoke-only
-python -u paired.py abc ab ac
+python -u paired.py learned_selection_with_positions --smoke-only
+python -u paired.py learned_selection_with_positions learned_selection source_positions
 ```
 
 每个方法的训练状态和最佳权重保存在 `checkpoints/csp/<method>/`，逐轮指标、配置、预测和选段统计保存在 `results/csp/<method>/`。逐样本 CSV 同时记录选中与中心窗口的压缩索引和原始 BPE 半开区间。窗口重叠按实际保留的 BPE 位置计算。选择位置直方图将选中窗口的中心划入各自区域内等宽的八档。同一函数中有多于一个候选的区域才参与位置分布统计。验证集完整 MCC 决定最佳轮次，使用同一个固定测试阈值。
@@ -985,7 +1009,7 @@ python -u window_baselines.py vulnscout && python -u window_baselines.py sea
 
 ### PrimeVul_original 测试结果
 
-验证 MCC 在第 14 轮最高（0.1125）。表中均为种子 42 的 PrimeVul 结果，PR-AUC 使用 average precision，长短按原始正文 BPE 判定。历史 Head、Uniform-4 与本次的 Valid/Test 成员、标签和原始长度逐行相同；两组历史基线使用有效 batch 8、10% 预热和 LongVul 的 LOSVERAdamW。[历史预测与指标](https://github.com/puhaoyang78/LongVul/tree/e094c1ef8bd5e56b08f154a416f89a9eb9c3ecf6/results/paired)
+验证 MCC 在第 14 轮最高（0.1125）。表中均为种子 42 的 PrimeVul 结果，PR-AUC 使用 average precision，长短按原始正文 BPE 判定。历史 Head、Uniform-4 与本次的 Valid/Test 成员、标签和原始长度逐行相同；两组历史基线使用有效 batch 8、10% 预热和 LongVul 的 AdamW。[历史预测与指标](https://github.com/puhaoyang78/LongVul/tree/e094c1ef8bd5e56b08f154a416f89a9eb9c3ecf6/results/paired)
 
 | 模型 | 测试范围 | 函数 | MCC | F1 | Precision | Recall | ROC-AUC | PR-AUC |
 |---|---|---:|---:|---:|---:|---:|---:|---:|

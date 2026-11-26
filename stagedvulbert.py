@@ -130,7 +130,7 @@ def smoke(model, dataset):
     before = [p.detach().clone() for p in watch]
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1., error_if_nonfinite=True)
     opt.step()
-    if any(torch.equal(p, old) for p, old in zip(watch, before)):
+    if any(torch.equal(p, initial) for p, initial in zip(watch, before)):
         raise ValueError("optimizer did not update TE, SE or function head")
     return dict(idx=[dataset.metadata[i]["idx"] for i in longest], loss=loss.item(), gradient_norms=grad,
                 peak_allocated_bytes=torch.cuda.max_memory_allocated())
