@@ -380,7 +380,7 @@ def measure_data(split, tokenizer, method, *, analyze=False):
 
 
 def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BATCH_SIZE, bf16=False, collator=collate,
-                   epochs=EPOCHS, stop_after=None, before_epoch=None):
+                   epochs=EPOCHS, stop_after=None, before_epoch=None, after_epoch=None):
     if micro_batch <= 0 or BATCH_SIZE % micro_batch:
         raise ValueError("Micro-batch must divide the effective batch size")
     weights.mkdir(parents=True, exist_ok=True)
@@ -416,6 +416,8 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
         history.append(dict(epoch=epoch, optimizer_steps=per_epoch, **train_stats,
                             peak_allocated_bytes=peak, validation=validation,
                             training_seconds=seconds, validation_seconds=valid_seconds))
+        if after_epoch is not None:
+            history[-1].update(after_epoch(model,epoch))
         save_training_state(weights, model, optimizer, config, history, scheduler=schedule)
         write_json(root / "epochs.json", history)
         print(root.name, epoch, f"loss={train_stats['train_loss']:.5f} valid_mcc={validation['mcc']:.4f} train_s={seconds:.1f}",

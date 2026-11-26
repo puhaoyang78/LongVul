@@ -539,9 +539,23 @@ def fit_fine(tokenizer,seed,method):
     if aligned:
         fit_indexer(tokenizer,seed)
     index = load_index(seed,aligned)
+    return fit_frozen_fine(tokenizer,index,config,area,seed_root(WEIGHTS,seed)/method,uniform=uniform)
+
+
+def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None):
+    method,seed,fusion,context = (config[k] for k in ("method","seed","fusion","context_budget"))
+    aligned = config["block_layout"] == "statement32"
+    path = area/"metrics.json"
+    if path.is_file():
+        result = read_json(path)
+        if result["config"] != config:
+            raise ValueError(f"Different experiment configuration at {path}")
+        return result
+    if any(p.requires_grad for p in index.parameters()):
+        raise ValueError("Fine training requires a frozen indexer")
     datasets, stages = {}, {}
     for name in ("train","valid"):
-        split = load_split(name,tokenizer,aligned=aligned)
+        split = cached[name] if cached is not None else load_split(name,tokenizer,aligned=aligned)
         features,ranks,scoring = score_coarse(index,split,fusion)
         data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform)
         stages[name] = dict(source_seconds=split.source_seconds,block_cache_read_seconds=split.cache_read_seconds,
@@ -552,7 +566,6 @@ def fit_fine(tokenizer,seed,method):
             validation = (split,data,ranks,scoring,seconds)
     set_seed(seed)
     model = FusionClassifier(fp32_classifier(tokenizer).detector,fusion).cuda()
-    weights = seed_root(WEIGHTS,seed)/method
     best,history = fit_classifier(model,datasets["train"],data,weights,area,config,collator=collate_fine)
     del datasets
     result = fitted(config,best,history,len(data))
@@ -578,6 +591,7 @@ def fit_fine(tokenizer,seed,method):
     write_json(path,result)
     print(method,"complete",seed,"epoch",best["epoch"],"Test MCC",
           result["split"]["test"]["unixcoder"]["groups"]["overall"]["mcc"],flush=True)
+    return result
 
 
 def smoke(tokenizer):

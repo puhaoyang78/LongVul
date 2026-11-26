@@ -83,6 +83,39 @@ class RetrievalTest(unittest.TestCase):
 
 
 class IndexerTest(unittest.TestCase):
+    def test_weighted_only_auxiliary_has_no_direct_global_path(self):
+        torch.manual_seed(42)
+        g = torch.randn(2,16,requires_grad=True)
+        z = torch.randn(2,8,requires_grad=True)
+        index = CoarseClassifier(8,"joint",bypass=False).eval()
+        other = CoarseClassifier(8,"joint").eval()
+        _,prediction = index.auxiliary(g,z)
+        _,changed = index.auxiliary(g+10,z)
+        torch.testing.assert_close(prediction,changed,rtol=0.,atol=0.)
+        self.assertIsNone(torch.autograd.grad(prediction.sum(),g,allow_unused=True)[0])
+        self.assertIsNotNone(torch.autograd.grad(other.auxiliary(g,z)[1].sum(),g)[0])
+        self.assertEqual(index.representation[1].out_features,other.representation[1].out_features)
+
+    def test_frozen_and_joint_phases_keep_the_same_scoring_contract(self):
+        torch.manual_seed(42)
+        model = CoarseClassifier(8,"joint",bypass=False).eval()
+        batch = dict(blocks=torch.randn(2,4,8),valid=torch.tensor([[1,1,1,1],[1,1,0,0]]).bool(),
+                     labels=torch.tensor([0,1]),repair=torch.tensor([[1.,0.,0.,0.],[0.,1.,0.,0.]]))
+        model.indexer.requires_grad_(False)
+        warm = model(batch,details=True,inspect=True)
+        warm["loss"].backward()
+        self.assertTrue(all(p.grad is None for p in model.indexer.parameters()))
+        self.assertGreater(float(model.head[-1].weight.grad.norm()),0.)
+        torch.testing.assert_close(warm["importance"],warm["head_importance"].mean(1))
+        model.indexer.requires_grad_(True)
+        model.repair_weight = .5
+        trained = model(batch,details=True)
+        torch.testing.assert_close(warm["importance"],trained["importance"],rtol=0.,atol=0.)
+        for key in ("train_bce","train_repair_kl"):
+            gradients = torch.autograd.grad(trained["loss_components"][key],model.indexer.parameters(),
+                                            retain_graph=True)
+            self.assertTrue(all(float(g.norm())>0. for g in gradients))
+
     def test_task_and_repair_gradients_with_padding_invariance(self):
         torch.manual_seed(42)
         model = CoarseClassifier(8,"joint",1.).eval()

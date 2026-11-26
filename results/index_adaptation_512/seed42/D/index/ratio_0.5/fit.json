@@ -1,0 +1,85 @@
+{
+  "config": {
+    "method": "index_D_index_adaptation",
+    "seed": 42,
+    "epochs": 14,
+    "batch_size": 8,
+    "length": 512,
+    "lr": 2e-05,
+    "eps": 1e-08,
+    "optimizer": "LOSVERAdamW",
+    "weight_decay": 0.0,
+    "warmup": 0.1,
+    "grad_clip": 1.0,
+    "precision": "FP32 on cached FP16 blocks",
+    "model": "/home/PublicData/PHY-data/resource/unixcoder-base-nine",
+    "loss": "function BCE + labeled function mean KL",
+    "class_weight": 1.0,
+    "threshold": 0.5,
+    "comparison": ">",
+    "selection": "highest full validation MCC, earliest tie",
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "cuda": "12.8",
+    "torch": "2.9.1+cu128",
+    "transformers": "4.57.3",
+    "python": "3.11.14",
+    "model_id": "microsoft/unixcoder-base-nine",
+    "model_revision": "5f0dc256eb0904af496d427451da5d7f90261676",
+    "block_size": 32,
+    "query_heads": 4,
+    "index_dimension": 128,
+    "full_encoder_precision": "BF16 SDPA",
+    "full_encoder_window_batch": 24,
+    "tree_sitter": "0.25.2",
+    "tree_sitter_cpp": "0.23.4",
+    "historical_input_revision": "9d9536371b20ae3ea445254d8b4a4a6f36e252e1",
+    "split_functions": {
+      "train": 8708,
+      "valid": 1124,
+      "test": 1128
+    },
+    "stage": "index_adaptation",
+    "block_layout": "fixed32",
+    "repair_weight": 0.03208804498147253,
+    "auxiliary_bypass": false,
+    "historical_initialization": "joint_1.0",
+    "inherited_training_seconds": {
+      "global": 118.19299205904827,
+      "joint_1.0": 181.81114253390115
+    },
+    "target_weighted_ratio": 0.5,
+    "new_index_training_epochs": 16,
+    "probe_batches": 64
+  },
+  "selected_epoch": 2,
+  "validation": {
+    "accuracy": 0.5373665480427047,
+    "precision": 0.5558510638297872,
+    "recall": 0.3718861209964413,
+    "f1": 0.44562899786780386,
+    "mcc": 0.07919624108002887,
+    "auc": 0.5435784754499056,
+    "auprc": 0.5451023921975291,
+    "tp": 209,
+    "tn": 395,
+    "fp": 167,
+    "fn": 353,
+    "confusion_matrix": [
+      [
+        395,
+        167
+      ],
+      [
+        353,
+        209
+      ]
+    ],
+    "samples": 1124,
+    "threshold": 0.5
+  },
+  "train_seconds": 160.78215983719565,
+  "validation_seconds": 5.799793249228969,
+  "peak_train_allocated_bytes": 557897728,
+  "last_three_mean_train_loss": 0.7336814800898234,
+  "one_class_valid_epochs": 0
+}

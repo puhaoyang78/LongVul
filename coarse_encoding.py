@@ -114,49 +114,64 @@ class ContextIndexer(nn.Module):
         self.query = nn.Linear(2*width, QUERY_HEADS*INDEX_WIDTH, bias=False)
         self.key = nn.Linear(width, INDEX_WIDTH, bias=False)
 
-    def forward(self, blocks, valid, global_state):
+    def forward(self, blocks, valid, global_state, *, per_head=False):
         query = self.query(F.layer_norm(global_state, (global_state.shape[-1],))).reshape(-1, QUERY_HEADS, INDEX_WIDTH)
         key = self.key(F.layer_norm(blocks, (blocks.shape[-1],)))
         score = torch.bmm(query, key.transpose(1,2))/math.sqrt(INDEX_WIDTH)
-        return score.masked_fill(~valid[:, None, :], -torch.inf).softmax(-1).mean(1)
+        heads = score.masked_fill(~valid[:, None, :], -torch.inf).softmax(-1)
+        return heads if per_head else heads.mean(1)
 
 
 class CoarseClassifier(nn.Module):
-    def __init__(self, width, supervision, repair_weight=0.):
+    def __init__(self, width, supervision, repair_weight=0., *, bypass=True):
         super().__init__()
         self.width = width
         self.supervision = supervision
         self.repair_weight = repair_weight
-        self.representation = nn.Sequential(nn.LayerNorm(3*width), nn.Linear(3*width,width), nn.Tanh())
+        self.bypass = bypass
+        inputs = 3*width if bypass else width
+        self.representation = nn.Sequential(nn.LayerNorm(inputs), nn.Linear(inputs,width), nn.Tanh())
         self.head = nn.Sequential(nn.Dropout(.1), nn.Linear(width,1))
         self.indexer = None if supervision == "global" else ContextIndexer(width)
 
-    def forward(self, batch, *, details=False):
+    def auxiliary(self, g, z):
+        features = torch.cat((g,z),dim=-1) if self.bypass else z
+        coarse = self.representation(features)
+        return coarse,self.head(coarse).squeeze(-1)
+
+    def forward(self, batch, *, details=False, inspect=False):
         blocks, valid = batch["blocks"].float(), batch["valid"]
         g = global_pool(blocks, valid)
         if self.indexer is None:
             z = g[:, :self.width]
         else:
-            p = self.indexer(blocks, valid, g)
+            scores = self.indexer(blocks, valid, g, per_head=inspect)
+            p = scores.mean(1) if inspect else scores
             pooling = p.detach() if self.supervision == "repair" else p
             z = torch.bmm(pooling[:, None, :], blocks).squeeze(1)
-        coarse = self.representation(torch.cat((g,z), dim=-1))
-        logits = self.head(coarse).squeeze(-1)
+        coarse,logits = self.auxiliary(g,z)
         output = dict(logits=logits, probability=logits.sigmoid())
         if details:
             output["coarse"] = coarse
             if self.indexer is not None:
                 output.update(importance=p, global_state=g, weighted=z)
+        if inspect and self.indexer is not None:
+            _,uniform_logits = self.auxiliary(g,g[:, :self.width])
+            output.update(head_importance=scores, uniform_probability=uniform_logits.sigmoid())
         if "labels" in batch:
             bce = F.binary_cross_entropy_with_logits(logits, batch["labels"].float())
             loss, parts = bce, dict(train_bce=bce)
             if self.repair_weight:
                 q = batch["repair"]
-                kl = F.kl_div(p.clamp_min(1e-12).log(), q, reduction="none").sum()/q.any(-1).sum().clamp_min(1)
+                kl = repair_kl(p,q)
                 parts["train_repair_kl"] = kl
                 loss = bce+self.repair_weight*kl
             output.update(loss=loss, loss_components=parts)
         return output
+
+
+def repair_kl(p, q):
+    return F.kl_div(p.clamp_min(1e-12).log(), q, reduction="none").sum()/q.any(-1).sum().clamp_min(1)
 
 
 def collate_fine(examples):
