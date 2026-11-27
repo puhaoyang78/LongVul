@@ -56,15 +56,20 @@ def load_context_encoder():
 def context_encoder_batches(model, tokenizer, windows, *, prefix_sum=True):
     """Encode each source window once for span pooling or frozen Token extraction."""
     while batch := list(islice(windows, CONTEXT_BATCH)):
-        width = max(hi-lo+2 for _,lo,hi,_ in batch)
-        ids = torch.full((len(batch), width), tokenizer.pad_token_id, dtype=torch.long)
-        mask = torch.zeros_like(ids, dtype=torch.bool)
-        for i, (source, lo, hi, _) in enumerate(batch):
-            values = [tokenizer.cls_token_id, *source.ids[lo:hi].tolist(), tokenizer.sep_token_id]
-            ids[i, :len(values)] = torch.tensor(values)
-            mask[i, :len(values)] = True
+        ids,mask = context_window_inputs(tokenizer,batch)
         hidden = model(input_ids=ids.cuda(), attention_mask=mask.cuda()).last_hidden_state
         yield batch, F.pad(hidden.float().cumsum(1), (0,0,1,0)) if prefix_sum else hidden, ids.numel()
+
+
+def context_window_inputs(tokenizer,windows):
+    width = max(hi-lo+2 for _,lo,hi,_ in windows)
+    ids = torch.full((len(windows),width),tokenizer.pad_token_id,dtype=torch.long)
+    mask = torch.zeros_like(ids,dtype=torch.bool)
+    for i,(source,lo,hi,_) in enumerate(windows):
+        values = [tokenizer.cls_token_id,*source.ids[lo:hi].tolist(),tokenizer.sep_token_id]
+        ids[i,:len(values)] = torch.tensor(values)
+        mask[i,:len(values)] = True
+    return ids,mask
 
 
 def contextual_vectors(model, sources, tokenizer, split):

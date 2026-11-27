@@ -5,14 +5,62 @@ import numpy as np
 import torch
 
 from coarse_encoding import (INDEX_WIDTH, QUERY_HEADS, BlockData, CoarseClassifier, ContextIndexer,
-                             block_mass, collate_blocks, repair_block_distribution, repair_block_mass)
-from coarse_retrieval import Layout, block_ends, lengths, part_overlap, retrieve, selected_statement_scores, uncovered
+                             block_mass, budget_ranking_loss, collate_blocks, repair_block_distribution,
+                             repair_block_mass)
+from coarse_retrieval import (Layout, block_ends, center_blocks, lengths, part_overlap, retrieve,
+                              selected_statement_scores, uncovered)
 from context_selection import contains, merge, occupied, prefer_context, source_parser
 from diagnostics.context_retrieval import group_counts, related_context_counts, score_bands
 from repair_oracle import EDIT_TYPES, GAP_TYPES
 
 
 class BlockEncodingTest(unittest.TestCase):
+    def test_ranking_compares_actual_center_selection_and_normalizes_repair_mass(self):
+        length = 550
+        ends = block_ends(length,(),(),32,False)
+        blocks = list(zip([0,*ends[:-1]],ends))
+        logits = torch.arange(len(blocks),0,-1,dtype=torch.float32)[None,:].requires_grad_()
+        _,selected = center_blocks(blocks,np.arange(len(blocks)),96)
+        self.assertEqual(selected[-1],len(blocks)-1)  # short tail fits after larger blocks fail
+        missed = [i for i in range(len(blocks)) if i not in selected][:2]
+        target = torch.zeros_like(logits)
+        target[0,missed] = torch.tensor([1.,3.])
+        target[0,selected[0]] = 2.
+        probability = logits.softmax(-1)
+        loss = budget_ranking_loss(probability,target,torch.tensor([length]),96)
+        expected = torch.nn.functional.softplus(
+            logits[0,selected[1:]][None,:]-logits[0,missed][:,None]).mean(-1)
+        torch.testing.assert_close(loss,(expected*torch.tensor([.25,.75])).sum())
+        loss.backward()
+        self.assertTrue(torch.all(logits.grad[0,missed]<0))
+        self.assertTrue(torch.all(logits.grad[0,selected[1:]]>0))
+
+    def test_ranking_has_no_pairs_for_short_or_unlabeled_functions(self):
+        probabilities = torch.ones((2,20),requires_grad=True)
+        repair = torch.zeros_like(probabilities)
+        repair[0,:1] = 1.
+        loss = budget_ranking_loss(probabilities,repair,torch.tensor([32,640]),96)
+        loss.backward()
+        self.assertEqual(loss.item(),0.)
+        self.assertEqual(probabilities.grad.count_nonzero().item(),0)
+
+    def test_joint_supervision_retains_kl_and_weights_ranking_by_one_tenth(self):
+        torch.manual_seed(1)
+        model = CoarseClassifier(8,"joint",1.,ranking_budget=96,ranking_weight=.1).eval()
+        blocks = torch.randn((1,20,8))
+        repair = torch.zeros((1,20))
+        repair[0,-5:] = .2
+        batch = dict(blocks=blocks,valid=torch.ones_like(repair,dtype=torch.bool),
+                     labels=torch.ones(1),repair=repair,body_lengths=torch.tensor([640]))
+        output = model(batch)
+        terms = output["loss_components"]
+        bce,kl,ranking = (terms[k] for k in ("train_bce","train_repair_kl","train_repair_ranking"))
+        torch.testing.assert_close(output["loss"],bce+kl+.1*ranking)
+        params = (model.indexer.query.weight,model.indexer.key.weight)
+        for term in (bce,kl,ranking):
+            grads = torch.autograd.grad(term,params,retain_graph=True)
+            self.assertTrue(all(g.isfinite().all() and g.norm()>0 for g in grads))
+
     def test_oracle_uses_the_training_distribution_without_inventing_labels(self):
         source = SimpleNamespace(keep=list(range(64)))
         edits = {kind:[] for kind in (*EDIT_TYPES,*GAP_TYPES)}

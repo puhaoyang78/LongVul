@@ -3,14 +3,15 @@ from itertools import accumulate
 import math
 from time import perf_counter
 
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-from compaction import collate
-from coarse_retrieval import part_overlap
+from compaction import BUDGET, collate
+from coarse_retrieval import block_ends, center_blocks, part_overlap
 from context_selection import merge
 from locator_quality import context_encoder_batches, whole_windows
 from repair_oracle import EDIT_TYPES, GAP_TYPES, compact_edits
@@ -26,6 +27,12 @@ def encoder_window_ends(source):
     if not ends or ends[-1] != len(source.ids):
         raise ValueError("Context windows must cover the complete, nonempty Simple input")
     return ends
+
+
+def window_block_requests(windows,blocks,offsets):
+    return torch.tensor([(offsets[i]+block,row,1+a-lo,1+b-lo)
+                         for row,(_,lo,hi,i) in enumerate(windows)
+                         for block,a,b in part_overlap(lo,hi,blocks[i])],dtype=torch.long).T
 
 
 def encode_blocks(model, sources, tokenizer, window_ends, blocks, *, token_features=None):
@@ -55,9 +62,7 @@ def encode_blocks(model, sources, tokenizer, window_ends, blocks, *, token_featu
             token_copy_seconds += perf_counter()-start_copy
         for _,_,_,i in batch:
             padding[i] += padded//len(batch)
-        requests = [(offsets[i]+block,row,1+a-lo,1+b-lo)
-                    for row,(_,lo,hi,i) in enumerate(batch) for block,a,b in part_overlap(lo,hi,blocks[i])]
-        index,row,a,b = torch.tensor(requests,dtype=torch.long).T
+        index,row,a,b = window_block_requests(batch,blocks,offsets)
         row_cuda,a_cuda,b_cuda = (x.cuda() for x in (row,a,b))
         sums.index_add_(0,index,(prefix[row_cuda,b_cuda]-prefix[row_cuda,a_cuda]).cpu())
         counts.index_add_(0,index,(b-a).int())
@@ -181,12 +186,15 @@ class ContextIndexer(nn.Module):
 
 
 class CoarseClassifier(nn.Module):
-    def __init__(self, width, supervision, repair_weight=0., *, bypass=True, matching="block"):
+    def __init__(self, width, supervision, repair_weight=0., *, bypass=True, matching="block",
+                 ranking_budget=None, ranking_weight=0.):
         super().__init__()
         self.width = width
         self.supervision = supervision
         self.repair_weight = repair_weight
         self.bypass = bypass
+        self.ranking_budget = ranking_budget
+        self.ranking_weight = ranking_weight
         inputs = 3*width if bypass else width
         self.representation = nn.Sequential(nn.LayerNorm(inputs), nn.Linear(inputs,width), nn.Tanh())
         self.head = nn.Sequential(nn.Dropout(.1), nn.Linear(width,1))
@@ -220,16 +228,44 @@ class CoarseClassifier(nn.Module):
             bce = F.binary_cross_entropy_with_logits(logits, batch["labels"].float())
             loss, parts = bce, dict(train_bce=bce)
             if self.repair_weight:
-                q = batch["repair"]
-                kl = repair_kl(p,q)
+                kl = repair_kl(p,batch["repair"])
                 parts["train_repair_kl"] = kl
-                loss = bce+self.repair_weight*kl
+                loss = loss+self.repair_weight*kl
+            if self.ranking_weight:
+                ranking = budget_ranking_loss(p,batch["repair"],batch["body_lengths"],self.ranking_budget)
+                parts["train_repair_ranking"] = ranking
+                loss = loss+self.ranking_weight*ranking
             output.update(loss=loss, loss_components=parts)
         return output
 
 
 def repair_kl(p, q):
     return F.kl_div(p.clamp_min(1e-12).log(), q, reduction="none").sum()/q.any(-1).sum().clamp_min(1)
+
+
+def budget_ranking_loss(probabilities, repair, body_lengths, context_budget):
+    """Compare missed repair blocks with unmarked blocks bought by the center budget."""
+    choices = probabilities.detach().cpu().numpy()
+    labels = repair.detach().cpu().numpy()
+    losses = []
+    for i,length in enumerate(body_lengths.tolist()):
+        if length<=BUDGET:
+            continue
+        ends = block_ends(length,(),(),BLOCK,False)
+        blocks = list(zip([0,*ends[:-1]],ends))
+        ranked = np.argsort(-choices[i,:len(blocks)],kind="stable")
+        _, selected = center_blocks(blocks,ranked,context_budget)
+        selected = np.asarray(selected,dtype=np.int64)
+        positives = np.flatnonzero(labels[i,:len(blocks)]>0)
+        missed = positives[~np.isin(positives,selected)]
+        unmarked = selected[labels[i,selected]==0]
+        if missed.size and unmarked.size:
+            # log(p) preserves deployed rank order and cancels score scale from long functions.
+            log_score = probabilities[i].clamp_min(1e-12).log()
+            mass = repair[i,missed]
+            costs = F.softplus(log_score[unmarked][None,:]-log_score[missed][:,None]).mean(-1)
+            losses.append((costs*mass).sum()/mass.sum())
+    return torch.stack(losses).mean() if losses else probabilities.sum()*0.
 
 
 def collate_fine(examples):

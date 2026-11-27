@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from transformers import set_seed
 
 from coarse_encoding import (BLOCK, INDEX_WIDTH, QUERY_HEADS, BlockData, CoarseClassifier, FusionClassifier,
-                             collate_blocks, collate_fine, encode_blocks, encoder_window_ends,
+                             collate_blocks, collate_fine, encode_blocks, encoder_window_ends, global_pool,
                              repair_block_distribution, repair_block_mass)
 from coarse_retrieval import CONTEXT_TYPES, Layout, block_ends, lengths, retrieve, uncovered, uniform_layout
 from compaction import BUDGET, MAX_LENGTH, REGIONS, PackedData, pack_fixed
@@ -142,7 +142,7 @@ def source_identity(split):
                                      split.ends[::2],split.ends[1::2],strict=True)]
 
 
-def score_coarse(model, split, fusion):
+def score_coarse(model, split, fusion, *, probabilities=None):
     model.eval()
     token_features = split.token_features if model.indexer.matching != "block" else None
     loader = DataLoader(BlockData(split.rows,split.ends,split.vectors,token_features=token_features),
@@ -158,6 +158,8 @@ def score_coarse(model, split, fusion):
             features.append(out[key].cpu())
             counts = batch["valid"].sum(1).tolist()
             ranking.extend(row[:n].numpy().copy() for n,row in zip(counts,out["importance"].cpu(),strict=True))
+            if probabilities is not None:
+                probabilities.extend(out["probability"].cpu().tolist())
     return torch.cat(features),ranking,dict(seconds=perf_counter()-started,
                                             peak_allocated_bytes=torch.cuda.max_memory_allocated())
 
@@ -427,6 +429,32 @@ def selection_reports(records,edits,sizes):
     return dict(edit_retention=retention,layout=summaries)
 
 
+def retrieval_quality_rows(split,layouts,edits):
+    for source,ends,layout,edit in zip(split.sources,split.ends,layouts,edits,strict=True):
+        actual = merge(span for kind in EDIT_TYPES for span in edit[kind])
+        spans = raw_runs(source.keep,layout.spans)
+        hits = overlap_bpe(spans,actual)
+        marks = repair_block_mass(source,ends,edit,EDIT_TYPES).nonzero().flatten().tolist()
+        marked = [(ends[i-1] if i else 0,ends[i]) for i in marks]
+        yield (lengths(actual),hits,len(marked),sum(contains(b,layout.spans) for b in marked),
+               sum(intersects(b,layout.spans) for b in marked))
+
+
+def retrieval_quality(rows):
+    total = sum(e for e,_,_,_,_ in rows)
+    kept = sum(h for _,h,_,_,_ in rows)
+    edited = sum(e>0 for e,_,_,_,_ in rows)
+    missed = sum(e>0 and h==0 for e,h,_,_,_ in rows)
+    relevant = sum(r for _,_,r,_,_ in rows)
+    full = sum(f for _,_,_,f,_ in rows)
+    touched = sum(t for _,_,_,_,t in rows)
+    return dict(functions=len(rows),edit_bpe=total,retained_edit_bpe=kept,retention=kept/total if total else None,
+                edited_functions=edited,missing_all=missed,omission=missed/edited if edited else None,
+                relevant_blocks=relevant,fully_retained_blocks=full,touched_blocks=touched,
+                block_recall=full/relevant if relevant else None,
+                touched_block_recall=touched/relevant if relevant else None)
+
+
 def evaluate(split,data,scores,ranks,root,name,*,control,coarse_cost,packing_seconds,fine_cost,pipeline_seconds=None,
              privileged_retrieval=False):
     sources,rows = split.sources,split.rows
@@ -452,22 +480,25 @@ def evaluate(split,data,scores,ranks,root,name,*,control,coarse_cost,packing_sec
         record.update(layout_row(source,ex["layout"],tree,edit,reference))
     write_prediction_rows(root/f"{name}.csv.gz",records)
     encoded = {k:v for k,v in split.encoding.items() if k!="per_function_padded_positions"}
+    fusion_encoding = coarse_cost.get("fusion_encoding",{})
     cost = dict(source_seconds=split.source_seconds,syntax_for_blocks_seconds=split.syntax_seconds,
                 global_encoding=encoded,index_scoring=coarse_cost,retrieval_and_packing_seconds=packing_seconds,
                 fine_encoding=fine_cost,cache_read_seconds=split.cache_read_seconds,
                 measured_end_to_end_seconds=pipeline_seconds,
                 peak_inference_allocated_bytes=max(encoded["peak_allocated_bytes"], coarse_cost["peak_allocated_bytes"],
-                                                   fine_cost["peak_allocated_bytes"]),
-                **{key:encoded[key]+fine_cost[key] for key in
+                                                   fine_cost["peak_allocated_bytes"],fusion_encoding.get("peak_allocated_bytes",0)),
+                **{key:encoded[key]+fine_cost[key]+fusion_encoding.get(key,0) for key in
                    ("windows","batch_calls","unpadded_positions","padded_positions")})
     indexer = {"unit":"statement-aligned blocks" if split.aligned else "fixed blocks","target_bpe":BLOCK}
     if privileged_retrieval:
         indexer["ranking_source"] = "privileged same-side repair annotations"
     else:
         indexer["unixcoder"] = index_diagnostics(split,ranks,edits,raw)
-    return dict(unixcoder=classification(rows,scores,raw)|selection_reports(records,edits,raw),
-                codebert=classification(rows,scores,codebert)|selection_reports(records,edits,codebert),
-                indexer=indexer,cost=cost)
+    quality = list(retrieval_quality_rows(split,(x["layout"] for x in data.examples),edits))
+    reports = {key:classification(rows,scores,sizes)|selection_reports(records,edits,sizes)|dict(
+        retrieval={g:retrieval_quality([r for n,r in zip(sizes,quality,strict=True) if lo<=n<=hi])
+                   for g,(lo,hi) in GROUPS.items()}) for key,sizes in (("unixcoder",raw),("codebert",codebert))}
+    return dict(**reports,indexer=indexer,cost=cost)
 
 
 def zero_control(split,ranks):
@@ -613,9 +644,17 @@ def oracle_block_scores(split):
             for source,ends,annotation in zip(split.sources,split.ends,edits,strict=True)]
 
 
-def prepare_fine_inputs(split,index,tokenizer,config,*,uniform=False):
+def prepare_fine_inputs(split,index,tokenizer,config,*,uniform=False,global_vectors=None):
     fusion = config["fusion"]
     features,ranks,scoring = score_coarse(index,split,"global" if fusion=="none" else fusion)
+    if global_vectors is not None:
+        started = perf_counter()
+        loader = DataLoader(BlockData(split.rows,split.ends,global_vectors),
+                            batch_size=BATCH_SIZE,collate_fn=collate_blocks)
+        with torch.no_grad():
+            features = torch.cat([global_pool(batch["blocks"].cuda().float(),batch["valid"].cuda()).cpu()
+                                  for batch in loader])
+        scoring["fusion_pooling_seconds"] = perf_counter()-started
     if config.get("privileged_retrieval",False):
         started = perf_counter()
         ranks = oracle_block_scores(split)
@@ -626,7 +665,8 @@ def prepare_fine_inputs(split,index,tokenizer,config,*,uniform=False):
     return data,ranks,scoring,seconds
 
 
-def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None,prepared=None):
+def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None,prepared=None,
+                    coarse_encoder=None,pretrained_global=False):
     method,seed = config["method"],config["seed"]
     aligned = config["block_layout"] == "statement32"
     path = area/"metrics.json"
@@ -671,15 +711,21 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     if result["validation"] != result["split"]["valid"]["unixcoder"]["groups"]["overall"]:
         raise ValueError("Reloaded weights did not reproduce the selected Valid checkpoint")
 
-    encoder = load_context_encoder().requires_grad_(False)
+    encoder = load_context_encoder().requires_grad_(False) if coarse_encoder is None else coarse_encoder
+    fusion_encoder = load_context_encoder().requires_grad_(False) if pretrained_global else None
     torch.cuda.synchronize()
     started = perf_counter()
     split = load_split("test",tokenizer,aligned=aligned,encoder=encoder,
                        token_features=index.indexer.matching != "block")
-    data,ranks,scoring,seconds = prepare_fine_inputs(split,index,tokenizer,config,uniform=uniform)
+    global_vectors,fusion_encoding = (None,None) if fusion_encoder is None else encode_blocks(
+        fusion_encoder,split.sources,tokenizer,split.windows,split.ends)
+    data,ranks,scoring,seconds = prepare_fine_inputs(split,index,tokenizer,config,uniform=uniform,
+                                                    global_vectors=global_vectors)
+    if fusion_encoding is not None:
+        scoring["fusion_encoding"] = fusion_encoding
     scores,fine = predict_fine(model,data)
     elapsed = perf_counter()-started
-    del encoder
+    del encoder,fusion_encoder
     result["split"]["test"] = evaluate(split,data,scores,ranks,area,"test",control=zero_control(split,ranks),
                                       coarse_cost=scoring,packing_seconds=seconds,fine_cost=fine,pipeline_seconds=elapsed,
                                       privileged_retrieval=privileged)

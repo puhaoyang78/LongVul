@@ -91,6 +91,22 @@ def selected_statement_scores(scores, ends, centers, links):
             for statement in {statement for _,statement,_ in links}}
 
 
+def center_blocks(blocks, ranked, context_budget):
+    centers = []
+    selected = []
+    for index in ranked:
+        candidate = merge([*centers,blocks[index]])
+        if occupied(candidate) <= BUDGET-context_budget:
+            centers = candidate
+            selected.append(index)
+        if occupied(centers) == BUDGET-context_budget:
+            break
+        # Zero reserve follows the historical policy: trim the first over-budget block.
+        if not context_budget and candidate != centers:
+            break
+    return centers, selected
+
+
 def retrieve(scores, source, ends, context_budget, parser=None, *, importance_guided=False, candidate_relations=None):
     if len(scores) != len(ends) or not 0 <= context_budget < BUDGET:
         raise ValueError("Invalid scores or context budget")
@@ -99,16 +115,7 @@ def retrieve(scores, source, ends, context_budget, parser=None, *, importance_gu
         return Layout([(0,length)],[],[],[])
     blocks = list(zip([0,*ends[:-1]],ends))
     ranked = np.argsort(-scores,kind="stable")
-    centers = []
-    for index in ranked:
-        candidate = merge([*centers,blocks[index]])
-        if occupied(candidate) <= BUDGET-context_budget:
-            centers = candidate
-        if occupied(centers) == BUDGET-context_budget:
-            break
-        # Zero reserve follows the historical policy: trim the first over-budget block.
-        if not context_budget and candidate != centers:
-            break
+    centers, _ = center_blocks(blocks,ranked,context_budget)
     if not context_budget:
         spans = ranked_fill(blocks,ranked,[])
         return Layout(spans,centers,[],uncovered(spans,centers))

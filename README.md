@@ -2,6 +2,24 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## 预算感知索引与任务适配编码
+
+保持已验证的精细编码和融合方式，比较按 Valid 实际修改 BPE 保留率选索引检查点、预算感知排序，以及只适配粗粒度 UniXcoder 最后两层。联合监督保留 KL 权重 1.0，并以 0.1 加权排序项。适配组的匹配诊断保持精细输入不变，单独更换 Global Fusion 向量来源。[实验协议和结果](results/budget_indexing_512/report.md)
+
+Seed 42 的完整 Valid MCC 选出冻结编码器的联合监督。它在三种子上的整体 Test MCC 为 **0.0889 ± 0.0288**，低于现有 LongVul 的 **0.1065 ± 0.0158**。UniXcoder 长组的真实修改 BPE 保留率仅从 48.12% 升至 48.68%，匹配 Oracle 为 85.22%。本轮保留现有 LongVul 为正式配置。[统一基线比较与分层结果](results/budget_indexing_512/report.md#三种子统一对比) · [逐种子完整统计](results/budget_indexing_512/summary.json)
+
+以下命令生成所有 Seed 42 对照，并仅以 Valid 选择补充两个种子的方案。推理和训练使用服务器本地预训练权重与既有的冻结块缓存。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 OMP_NUM_THREADS=4 RAYON_NUM_THREADS=4
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" budget_indexing.py smoke
+for seed in 42 1234 123456; do
+    "$PYTHON" budget_indexing.py run --seed "$seed"
+done
+"$PYTHON" -m diagnostics.budget_indexing
+```
+
 ## 全局融合消融与匹配 Oracle
 
 补齐 Standard Fine-only 的三个种子。两种 Oracle 策略使用真实修复 Diff 构造 32 BPE 块分数，复用 Predicted 的中心优先检索、96 位置上下文预算、填充与 512 位置打包。Oracle 的 Train、Valid 和 Test 均读取真实修复配对，数据用于特权诊断。全局向量仍取当前函数的冻结表示。各新增分类器从原始预训练 UniXcoder 独立微调。[对照协议与机制结果](results/matched_oracle_512/report.md)

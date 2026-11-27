@@ -386,7 +386,7 @@ def measure_data(split, tokenizer, method, *, analyze=False):
 
 
 def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BATCH_SIZE, bf16=False, collator=collate,
-                   epochs=EPOCHS, stop_after=None, before_epoch=None, after_epoch=None):
+                   epochs=EPOCHS, stop_after=None, before_epoch=None, after_epoch=None, validate=None):
     if micro_batch <= 0 or BATCH_SIZE % micro_batch:
         raise ValueError("Micro-batch must divide the effective batch size")
     weights.mkdir(parents=True, exist_ok=True)
@@ -404,7 +404,10 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
         restore_rng(rng)
     else:
         write_json(root / "config.json", config)
-    best = max((row["validation"]["mcc"] for row in history), default=-math.inf)
+    def criterion(row):
+        return row["validation"]["mcc"] if validate is None else row["retrieval_validation"]["retention"]
+
+    best = max(map(criterion,history),default=-math.inf)
     for epoch in range(len(history)+1, (stop_after or epochs)+1):
         if before_epoch is not None:
             before_epoch(model, epoch)
@@ -414,17 +417,22 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
         train_stats = train_epoch(model, train_loader, optimizer, schedule, bf16=bf16)
         seconds, peak = perf_counter()-start, torch.cuda.max_memory_allocated()
         start = perf_counter()
-        scores, _ = predict(model, valid_loader, bf16=bf16)
+        if validate is None:
+            scores, _ = predict(model, valid_loader, bf16=bf16)
+            retrieval = {}
+        else:
+            scores, report = validate(model)
+            retrieval = {"retrieval_validation":report}
         valid_seconds = perf_counter()-start
         validation = metrics(valid.targets.tolist(), scores)
-        if validation["mcc"] > best:
-            best = validation["mcc"]
+        row = dict(epoch=epoch,optimizer_steps=per_epoch,**train_stats,peak_allocated_bytes=peak,
+                   validation=validation,training_seconds=seconds,validation_seconds=valid_seconds,**retrieval)
+        if criterion(row)>best:
+            best = criterion(row)
             temporary = weights / "best.tmp"
             torch.save(model.state_dict(), temporary)
             temporary.replace(weights / "best.pt")
-        history.append(dict(epoch=epoch, optimizer_steps=per_epoch, **train_stats,
-                            peak_allocated_bytes=peak, validation=validation,
-                            training_seconds=seconds, validation_seconds=valid_seconds))
+        history.append(row)
         if after_epoch is not None:
             history[-1].update(after_epoch(model,epoch))
         save_training_state(weights, model, optimizer, recorded_config, history, scheduler=schedule)
@@ -434,7 +442,7 @@ def fit_classifier(model, train, valid, weights, root, config, *, micro_batch=BA
     del optimizer, schedule
     # Checkpoint serialization can retain CUDA optimizer tensors in cycles.
     gc.collect()
-    selected = max(history, key=lambda r: r["validation"]["mcc"])
+    selected = max(history,key=criterion)
     model.load_state_dict(torch.load(weights / "best.pt", weights_only=True, map_location="cpu"), strict=True)
     return selected, history
 
