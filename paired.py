@@ -19,6 +19,7 @@ from transformers import AutoConfig, RobertaModel, get_linear_schedule_with_warm
 import context_selection as context
 import repair_oracle as repair
 from compaction import BUDGET, MAX_CANDIDATES, QUOTAS, REGIONS, CompactData, collate, prepare_function
+from relation_attention import AdditiveAttentionRoberta
 from region_selection import CHANNELS, DISTANCE_BINS, POSITION_BINS, TEMPERATURE, RegionSelectionClassifier, pack_selected_windows
 from window_inputs import BASE, DATA, ROOT, grouped_metrics, seed_path
 from rgcl.artifacts import read_json, write_json
@@ -45,16 +46,18 @@ UNIX_METHODS = (*context.METHODS, *repair.METHODS, PREDICTED_DIFF, ORACLE_NOISE)
 CODEBERT_UNIFORM = "codebert_uniform4"
 
 
-def make_model(tokenizer, method, *, long_input=False, pretrained=True):
+def make_model(tokenizer, method, *, long_input=False, pretrained=True, additive_attention=False):
     select_windows, use_positions = METHODS.get(method, (False, False))
     backbone, source = ("unixcoder", UNIX_BASE) if long_input or method in UNIX_METHODS else ("codebert", BASE)
-    if long_input:
+    if long_input or additive_attention:
         config = AutoConfig.from_pretrained(source, local_files_only=True)
-        config._attn_implementation = "sdpa"
-        encoder = (RobertaModel.from_pretrained(source, config=config, add_pooling_layer=False,
-                                                attn_implementation="sdpa", local_files_only=True)
-                   if pretrained else RobertaModel(config, add_pooling_layer=False))
-        if type(encoder.encoder.layer[0].attention.self).__name__ != "RobertaSdpaSelfAttention":
+        implementation = "sdpa" if long_input else "eager"
+        config._attn_implementation = implementation
+        encoder_class = AdditiveAttentionRoberta if additive_attention else RobertaModel
+        encoder = (encoder_class.from_pretrained(source, config=config, add_pooling_layer=False,
+                                                 attn_implementation=implementation, local_files_only=True)
+                   if pretrained else encoder_class(config, add_pooling_layer=False))
+        if long_input and type(encoder.encoder.layer[0].attention.self).__name__ != "RobertaSdpaSelfAttention":
             raise ValueError("1024-position UniXcoder did not initialize its SDPA attention")
         base = Detector(encoder, config, "plm_classifier", 1.)
     else:

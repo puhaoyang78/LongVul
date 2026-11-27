@@ -2,6 +2,25 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## 关系感知精细编码
+
+固定关系排序检索布局及 512 位置精细输入，用四组匹配对照比较显式语法关系偏置与全局融合。三类偏置对应外围条件、声明和前置赋值，每类一个零初始化标量，所有层和注意力头共享。只映射完整保留的关系两端，普通注意力连接和 padding 掩码沿用原实现。各组独立微调精细编码器。[实验与机制报告](results/relation_encoding_512/report.md)
+
+Seed 42 的四组对照中，两个关系感知组的整体 Test MCC 均低于各自匹配的标准注意力组。按 Valid MCC 入选的 Relation-aware Fine-only 在三个种子的整体 Test MCC 为 **0.0749 ± 0.0126**，Standard Fusion 为 **0.1065 ± 0.0158**。两组在统一 CodeBERT >510 BPE 的 MCC 分别为 **0.0463 ± 0.0208** 和 **0.1007 ± 0.0259**。固定检查点置零关系偏置时，每组最多改变一个 Test 阈值判定。两组推理执行相同数量的 UniXcoder 编码，端到端平均耗时为 57.31 和 36.07 秒。正式配置保留 Standard Fusion。[完整分层结果与成本](results/relation_encoding_512/summary.json)
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" relation_encoding_experiment.py smoke
+"$PYTHON" relation_encoding_experiment.py run --seed 42 --methods \
+    standard_fusion standard_fine_only relation_aware_fusion relation_aware_fine_only
+METHOD=$("$PYTHON" relation_encoding_experiment.py choose)
+for seed in 1234 123456; do
+    "$PYTHON" relation_encoding_experiment.py run --seed "$seed" --methods standard_fusion "$METHOD"
+done
+"$PYTHON" -m diagnostics.relation_encoding
+```
+
 ## 中心重要性引导的关联上下文检索
 
 Relation-based Retrieval 累计语法关系权重。Importance-guided Retrieval 将与来源语句重叠的已选块的最大索引分数乘到相应关系权重上。两组共用每个种子重新训练的块级索引器，保持已选代码块、96 位置上下文预算和 512 位置精细编码预算。Tree-sitter 提供语句边界、外围条件和词法作用域中的候选声明、赋值。两组分别从原始 UniXcoder 权重微调 16 轮。[实验报告与三种子结果](results/context_retrieval_512/report.md)

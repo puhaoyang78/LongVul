@@ -158,8 +158,8 @@ def compare_saved(result):
     write_json(RESULTS / "comparison.json", comparison)
 
 
-def fp32_classifier(tokenizer):
-    model = make_model(tokenizer, PREDICTED_DIFF)
+def fp32_classifier(tokenizer, *, additive_attention=False):
+    model = make_model(tokenizer, PREDICTED_DIFF, additive_attention=additive_attention)
     if (model.detector.encoder.config._attn_implementation != "eager"
             or any(p.dtype != torch.float32 for p in model.parameters())):
         raise ValueError("Predicted-Diff requires the historical FP32 eager classifier")

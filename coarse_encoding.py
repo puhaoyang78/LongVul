@@ -14,6 +14,7 @@ from coarse_retrieval import part_overlap
 from context_selection import merge
 from locator_quality import context_encoder_batches, whole_windows
 from repair_oracle import compact_edits
+from relation_attention import RELATION_TYPES, additive_relation_mask, relation_bits
 
 BLOCK = 32
 QUERY_HEADS = 4
@@ -232,25 +233,45 @@ def collate_fine(examples):
     return batch
 
 
+def collate_relation_fine(examples):
+    batch = collate_fine(examples)
+    batch["relations"] = relation_bits(examples)
+    return batch
+
+
 class FusionClassifier(nn.Module):
-    def __init__(self, fine, fusion="original"):
+    def __init__(self, fine, fusion="original", *, relation_attention=False):
         super().__init__()
         self.fine = fine
         width = fine.config.hidden_size
-        self.fusion = nn.Linear(2*width if fusion == "global" else width, width, bias=False)
-        nn.init.zeros_(self.fusion.weight)
+        projection = nn.Linear(2*width if fusion in ("global","none") else width, width, bias=False)
+        nn.init.zeros_(projection.weight)
+        # Keep the seeded draw for the subsequent data shuffle in all matched arms.
+        self.fusion = None if fusion=="none" else projection
+        self.relation_bias = nn.Parameter(torch.zeros(len(RELATION_TYPES))) if relation_attention else None
+
+    @property
+    def collator(self):
+        return collate_relation_fine if self.relation_bias is not None else collate_fine
+
+    def relation_weights(self):
+        return dict(zip(RELATION_TYPES,self.relation_bias.detach().tolist(),strict=True))
 
     def representations(self, batch):
         ids = batch["fixed"][:,0].long()
         mask = torch.arange(ids.shape[1], device=ids.device)[None,:] < batch["lengths"][:,None]
-        cls = self.fine.encoder(input_ids=ids, attention_mask=mask.long()).last_hidden_state[:,0]
-        return cls,self.fusion(batch["coarse"])
+        attention_mask = mask.long() if self.relation_bias is None else additive_relation_mask(
+            batch["relations"],mask,self.relation_bias)
+        cls = self.fine.encoder(input_ids=ids,attention_mask=attention_mask).last_hidden_state[:,0]
+        return cls,torch.zeros_like(cls) if self.fusion is None else self.fusion(batch["coarse"])
 
     def forward(self, batch, *, details=False):
         cls,residual = self.representations(batch)
         mixed = cls+residual
         logits = self.fine.classifier(mixed[:,None])[:,0]
         output = dict(logits=logits, probability=logits.sigmoid())
+        if details:
+            output.update(cls=cls,fusion_residual=residual)
         if "labels" in batch:
             output["loss"] = F.binary_cross_entropy_with_logits(logits, batch["labels"].float())
         return output

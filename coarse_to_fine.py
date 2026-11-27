@@ -28,6 +28,7 @@ from paired import (AdamW, BACKBONES, BATCH_SIZE, DATA, ROOT, SEED, UNIX_BASE, U
                     fit_classifier, load_tokenizer, predict, prime_source_rows, to_gpu, with_recorded_names)
 from predicted_diff import HISTORICAL_REVISION, fp32_classifier, load_sources, paired_annotations
 from region_locator import region_metrics
+from relation_attention import visible_relations
 from repair_oracle import EDIT_TYPES, GAP_TYPES, grouped_edit_retention, overlap_bpe, raw_runs
 from rgcl.artifacts import read_json, write_json
 from rgcl.config import SEEDS
@@ -266,26 +267,31 @@ def load_index(seed,aligned):
     return model.cuda().eval().requires_grad_(False)
 
 
-def fine_data(split,features,ranks,tokenizer,budget,*,uniform=False,importance_guided=False):
+def fine_data(split,features,ranks,tokenizer,budget,*,uniform=False,importance_guided=False,with_relations=False):
     started = perf_counter()
     parser = source_parser() if budget and not uniform else None
     blank = torch.full((REGIONS,4),-1,dtype=torch.int32)
+    if with_relations and split.syntax is None:
+        split.syntax = source_syntax(split.sources)
 
     def examples():
-        for source,ends,f,scores in zip(split.sources,split.ends,features,ranks,strict=True):
+        for i,(source,ends,f,scores) in enumerate(zip(split.sources,split.ends,features,ranks,strict=True)):
             layout = uniform_layout(source) if uniform else retrieve(scores,source,ends,budget,parser,
                                                                      importance_guided=importance_guided)
             fixed,n = pack_fixed(source.raw_ids,source.keep,layout.spans,tokenizer)
             if n != min(MAX_LENGTH,len(source.ids)+2):
                 raise ValueError("Fine input does not fill the historical positional budget")
-            yield dict(fixed=fixed,length=n,raw=len(source.raw_ids),compacted_bpe=len(source.ids),coarse=f,
-                       uniform=blank,bank=None,layout=layout)
+            example = dict(fixed=fixed,length=n,raw=len(source.raw_ids),compacted_bpe=len(source.ids),coarse=f,
+                           uniform=blank,bank=None,layout=layout)
+            if with_relations:
+                example["relations"] = visible_relations(source,fixed[1].numpy(),split.syntax[i][1])
+            yield example
     data = PackedData(split.rows,examples())
     return data,perf_counter()-started
 
 
 def predict_fine(model,data):
-    loader = DataLoader(data,batch_size=BATCH_SIZE,collate_fn=collate_fine)
+    loader = DataLoader(data,batch_size=BATCH_SIZE,collate_fn=model.collator)
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     started = perf_counter()
@@ -591,6 +597,12 @@ def fit_fine(tokenizer,seed,method):
     return fit_frozen_fine(tokenizer,index,config,area,seed_root(WEIGHTS,seed)/record,uniform=uniform)
 
 
+def fine_classifier(tokenizer,config):
+    relation_attention = config.get("relation_attention",False)
+    pretrained = fp32_classifier(tokenizer,additive_attention=relation_attention).detector
+    return FusionClassifier(pretrained,config["fusion"],relation_attention=relation_attention).cuda()
+
+
 def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None,prepared=None):
     method,seed,fusion,context = (config[k] for k in ("method","seed","fusion","context_budget"))
     aligned = config["block_layout"] == "statement32"
@@ -604,12 +616,14 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
         raise ValueError("Fine training requires a frozen indexer")
     datasets, stages = {}, {}
     importance_guided = config.get("context_priority") == "importance_guided"
+    relation_attention = config.get("relation_attention",False)
+    coarse_representation = "global" if fusion=="none" else fusion
     for name in ("train","valid"):
         split = cached[name] if cached is not None else load_split(name,tokenizer,aligned=aligned)
         if prepared is None:
-            features,ranks,scoring = score_coarse(index,split,fusion)
+            features,ranks,scoring = score_coarse(index,split,coarse_representation)
             data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,
-                                     importance_guided=importance_guided)
+                                     importance_guided=importance_guided,with_relations=relation_attention)
         else:
             data,ranks,scoring,seconds = prepared[name]
         stages[name] = dict(source_seconds=split.source_seconds,block_cache_read_seconds=split.cache_read_seconds,
@@ -619,8 +633,13 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
         else:
             validation = (split,data,ranks,scoring,seconds)
     set_seed(seed)
-    model = FusionClassifier(fp32_classifier(tokenizer).detector,fusion).cuda()
-    best,history = fit_classifier(model,datasets["train"],data,weights,area,config,collator=collate_fine)
+    model = fine_classifier(tokenizer,config)
+
+    def record_bias(current,epoch):
+        return {"relation_bias":current.relation_weights()} if relation_attention else {}
+
+    best,history = fit_classifier(model,datasets["train"],data,weights,area,config,collator=model.collator,
+                                  after_epoch=record_bias if relation_attention else None)
     del datasets
     result = fitted(config,best,history,len(data))
     result.update(preparation=stages,split={})
@@ -636,8 +655,9 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     started = perf_counter()
     split = load_split("test",tokenizer,aligned=aligned,encoder=encoder,
                        token_features=index.indexer.matching != "block")
-    features,ranks,scoring = score_coarse(index,split,fusion)
-    data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,importance_guided=importance_guided)
+    features,ranks,scoring = score_coarse(index,split,coarse_representation)
+    data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,importance_guided=importance_guided,
+                             with_relations=relation_attention)
     scores,fine = predict_fine(model,data)
     elapsed = perf_counter()-started
     del encoder
