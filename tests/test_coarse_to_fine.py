@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from coarse_encoding import (INDEX_WIDTH, QUERY_HEADS, BlockData, CoarseClassifier, ContextIndexer,
-                             block_mass, collate_blocks, repair_block_mass)
+                             block_mass, collate_blocks, repair_block_distribution, repair_block_mass)
 from coarse_retrieval import Layout, block_ends, lengths, part_overlap, retrieve, selected_statement_scores, uncovered
 from context_selection import contains, merge, occupied, prefer_context, source_parser
 from diagnostics.context_retrieval import group_counts, related_context_counts, score_bands
@@ -13,6 +13,14 @@ from repair_oracle import EDIT_TYPES, GAP_TYPES
 
 
 class BlockEncodingTest(unittest.TestCase):
+    def test_oracle_uses_the_training_distribution_without_inventing_labels(self):
+        source = SimpleNamespace(keep=list(range(64)))
+        edits = {kind:[] for kind in (*EDIT_TYPES,*GAP_TYPES)}
+        self.assertEqual(repair_block_distribution(source,[32,64],edits).tolist(),[0.,0.])
+        edits["replace"] = [(0,3)]
+        edits["insert_gap"] = [(2,4),(33,37)]
+        self.assertEqual(repair_block_distribution(source,[32,64],edits).tolist(),[.5,.5])
+
     def test_statement_boundaries_take_priority_and_preserve_the_tail(self):
         length, target = 165, 32
         statements = [(0,38),(20,32),(38,64),(64,90),(90,150),(150,165)]
@@ -35,6 +43,13 @@ class BlockEncodingTest(unittest.TestCase):
 
 
 class RetrievalTest(unittest.TestCase):
+    def test_all_zero_scores_follow_the_existing_stable_source_order(self):
+        source = SimpleNamespace(ids=range(1024))
+        ends = block_ends(len(source.ids),[],[],32,False)
+        layout = retrieve(np.zeros(len(ends)),source,ends,0)
+        self.assertEqual(layout.spans,[(0,510)])
+        self.assertEqual(layout.centers,[(0,480)])
+
     def test_relation_audit_distinguishes_retrieved_from_filled_context(self):
         source = SimpleNamespace(keep=list(range(0,96,2)))
         centers = [(0,16),(24,32)]

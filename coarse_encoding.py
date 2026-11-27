@@ -13,7 +13,7 @@ from compaction import collate
 from coarse_retrieval import part_overlap
 from context_selection import merge
 from locator_quality import context_encoder_batches, whole_windows
-from repair_oracle import compact_edits
+from repair_oracle import EDIT_TYPES, GAP_TYPES, compact_edits
 from relation_attention import RELATION_TYPES, additive_relation_mask, relation_bits
 
 BLOCK = 32
@@ -88,6 +88,11 @@ def block_mass(ends, spans):
 def repair_block_mass(source, ends, edits, kinds):
     mapped = compact_edits(source.keep,edits)
     return block_mass(ends,(span for kind in kinds for span in mapped[kind]))
+
+
+def repair_block_distribution(source,ends,edits):
+    mass = repair_block_mass(source,ends,edits,(*EDIT_TYPES,*GAP_TYPES))
+    return mass/mass.sum().clamp_min(1)
 
 
 class BlockData(Dataset):

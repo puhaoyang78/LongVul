@@ -18,7 +18,8 @@ from torch.utils.data import DataLoader
 from transformers import set_seed
 
 from coarse_encoding import (BLOCK, INDEX_WIDTH, QUERY_HEADS, BlockData, CoarseClassifier, FusionClassifier,
-                             collate_blocks, collate_fine, encode_blocks, encoder_window_ends, repair_block_mass)
+                             collate_blocks, collate_fine, encode_blocks, encoder_window_ends,
+                             repair_block_distribution, repair_block_mass)
 from coarse_retrieval import CONTEXT_TYPES, Layout, block_ends, lengths, retrieve, uncovered, uniform_layout
 from compaction import BUDGET, MAX_LENGTH, REGIONS, PackedData, pack_fixed
 from context_selection import (base_windows, contains, intersects, merge, occupied, prefer_context,
@@ -192,10 +193,8 @@ def fit_repair_indexer(train,valid,seed,method,root,weights,*,matching="block"):
     width = train.vectors.shape[-1]
     if (root/method/"fit.json").is_file():
         return read_json(root/method/"fit.json")
-    labels = []
-    for source,ends,edits in zip(train.sources,train.ends,paired_annotations(train.sources),strict=True):
-        mass = repair_block_mass(source,ends,edits,(*EDIT_TYPES,*GAP_TYPES))
-        labels.append(mass/mass.sum().clamp_min(1))
+    labels = [repair_block_distribution(source,ends,edits)
+              for source,ends,edits in zip(train.sources,train.ends,paired_annotations(train.sources),strict=True)]
     for name,supervision,weight,token_match in (
         ("global","global",0.,"block"), (method,"joint",REPAIR_INDEX_WEIGHT,matching)
     ):
@@ -428,7 +427,8 @@ def selection_reports(records,edits,sizes):
     return dict(edit_retention=retention,layout=summaries)
 
 
-def evaluate(split,data,scores,ranks,root,name,*,control,coarse_cost,packing_seconds,fine_cost,pipeline_seconds=None):
+def evaluate(split,data,scores,ranks,root,name,*,control,coarse_cost,packing_seconds,fine_cost,pipeline_seconds=None,
+             privileged_retrieval=False):
     sources,rows = split.sources,split.rows
     raw = [len(s.raw_ids) for s in sources]
     codebert = codebert_lengths(name,rows)
@@ -445,7 +445,7 @@ def evaluate(split,data,scores,ranks,root,name,*,control,coarse_cost,packing_sec
                for j,(i,r,cb,p,s,ex) in enumerate(zip(data.metadata,rows,codebert,scores,sources,data.examples,strict=True))]
     root.mkdir(parents=True,exist_ok=True)
     write_prediction_rows(root/f"{name}.csv.gz",records)
-    # The probabilities and all selected inputs are fixed before consulting paired edits.
+    # For source-only runs this is the first access to paired edits during evaluation.
     edits = paired_annotations(sources)
     syntax = split.syntax if split.syntax is not None else source_syntax(sources)
     for record,source,ex,tree,edit,reference in zip(records,sources,data.examples,syntax,edits,control,strict=True):
@@ -460,11 +460,14 @@ def evaluate(split,data,scores,ranks,root,name,*,control,coarse_cost,packing_sec
                                                    fine_cost["peak_allocated_bytes"]),
                 **{key:encoded[key]+fine_cost[key] for key in
                    ("windows","batch_calls","unpadded_positions","padded_positions")})
+    indexer = {"unit":"statement-aligned blocks" if split.aligned else "fixed blocks","target_bpe":BLOCK}
+    if privileged_retrieval:
+        indexer["ranking_source"] = "privileged same-side repair annotations"
+    else:
+        indexer["unixcoder"] = index_diagnostics(split,ranks,edits,raw)
     return dict(unixcoder=classification(rows,scores,raw)|selection_reports(records,edits,raw),
                 codebert=classification(rows,scores,codebert)|selection_reports(records,edits,codebert),
-                indexer={"unit":"statement-aligned blocks" if split.aligned else "fixed blocks",
-                         "target_bpe":BLOCK,"unixcoder":index_diagnostics(split,ranks,edits,raw)},
-                cost=cost)
+                indexer=indexer,cost=cost)
 
 
 def zero_control(split,ranks):
@@ -603,8 +606,28 @@ def fine_classifier(tokenizer,config):
     return FusionClassifier(pretrained,config["fusion"],relation_attention=relation_attention).cuda()
 
 
+def oracle_block_scores(split):
+    """Score each function using its own side of the paired repair. Diagnostics only."""
+    edits = paired_annotations(split.sources)
+    return [repair_block_distribution(source,ends,annotation).numpy()
+            for source,ends,annotation in zip(split.sources,split.ends,edits,strict=True)]
+
+
+def prepare_fine_inputs(split,index,tokenizer,config,*,uniform=False):
+    fusion = config["fusion"]
+    features,ranks,scoring = score_coarse(index,split,"global" if fusion=="none" else fusion)
+    if config.get("privileged_retrieval",False):
+        started = perf_counter()
+        ranks = oracle_block_scores(split)
+        scoring["oracle_labeling_seconds"] = perf_counter()-started
+    data,seconds = fine_data(split,features,ranks,tokenizer,config["context_budget"],uniform=uniform,
+                             importance_guided=config.get("context_priority")=="importance_guided",
+                             with_relations=config.get("relation_attention",False))
+    return data,ranks,scoring,seconds
+
+
 def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None,prepared=None):
-    method,seed,fusion,context = (config[k] for k in ("method","seed","fusion","context_budget"))
+    method,seed = config["method"],config["seed"]
     aligned = config["block_layout"] == "statement32"
     path = area/"metrics.json"
     if path.is_file():
@@ -615,15 +638,12 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     if any(p.requires_grad for p in index.parameters()):
         raise ValueError("Fine training requires a frozen indexer")
     datasets, stages = {}, {}
-    importance_guided = config.get("context_priority") == "importance_guided"
     relation_attention = config.get("relation_attention",False)
-    coarse_representation = "global" if fusion=="none" else fusion
+    privileged = config.get("privileged_retrieval",False)
     for name in ("train","valid"):
         split = cached[name] if cached is not None else load_split(name,tokenizer,aligned=aligned)
         if prepared is None:
-            features,ranks,scoring = score_coarse(index,split,coarse_representation)
-            data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,
-                                     importance_guided=importance_guided,with_relations=relation_attention)
+            data,ranks,scoring,seconds = prepare_fine_inputs(split,index,tokenizer,config,uniform=uniform)
         else:
             data,ranks,scoring,seconds = prepared[name]
         stages[name] = dict(source_seconds=split.source_seconds,block_cache_read_seconds=split.cache_read_seconds,
@@ -646,7 +666,8 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     split,data,ranks,scoring,seconds = validation
     scores,fine = predict_fine(model,data)
     result["split"]["valid"] = evaluate(split,data,scores,ranks,area,"valid",control=zero_control(split,ranks),
-                                       coarse_cost=scoring,packing_seconds=seconds,fine_cost=fine)
+                                       coarse_cost=scoring,packing_seconds=seconds,fine_cost=fine,
+                                       privileged_retrieval=privileged)
     if result["validation"] != result["split"]["valid"]["unixcoder"]["groups"]["overall"]:
         raise ValueError("Reloaded weights did not reproduce the selected Valid checkpoint")
 
@@ -655,14 +676,13 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     started = perf_counter()
     split = load_split("test",tokenizer,aligned=aligned,encoder=encoder,
                        token_features=index.indexer.matching != "block")
-    features,ranks,scoring = score_coarse(index,split,coarse_representation)
-    data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,importance_guided=importance_guided,
-                             with_relations=relation_attention)
+    data,ranks,scoring,seconds = prepare_fine_inputs(split,index,tokenizer,config,uniform=uniform)
     scores,fine = predict_fine(model,data)
     elapsed = perf_counter()-started
     del encoder
     result["split"]["test"] = evaluate(split,data,scores,ranks,area,"test",control=zero_control(split,ranks),
-                                      coarse_cost=scoring,packing_seconds=seconds,fine_cost=fine,pipeline_seconds=elapsed)
+                                      coarse_cost=scoring,packing_seconds=seconds,fine_cost=fine,pipeline_seconds=elapsed,
+                                      privileged_retrieval=privileged)
     write_json(path,result)
     print(method,"complete",seed,"epoch",best["epoch"],"Test MCC",
           result["split"]["test"]["unixcoder"]["groups"]["overall"]["mcc"],flush=True)

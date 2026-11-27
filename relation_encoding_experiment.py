@@ -164,8 +164,8 @@ def main():
             parser.error("run requires --methods")
         if args.seed!=SEED:
             selected = read_json(RESULTS/"method_policy.json")["selected"]
-            if not set(args.methods)<={BASELINE,selected}:
-                parser.error("supplementary seeds use only Standard Fusion and the Valid-selected method")
+            if not set(args.methods)<={BASELINE,"standard_fine_only",selected}:
+                parser.error("supplementary seeds use the standard controls or the Valid-selected method")
         fit_seed(tokenizer,args.seed,args.methods)
 
 

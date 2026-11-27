@@ -2,6 +2,27 @@
 
 PrimeVul_original 长函数漏洞检测基线。实验采用 RGCL 的原始配对划分，Train、Valid、Test 分别有 8,708、1,124、1,128 个函数。每个函数独立输入和分类。主实验使用种子 42，补充种子在相应结果中标注。使用验证集 MCC 选模（并列取最早轮）和固定判定规则 `p > 0.5`。长度按对应编码器的未截断正文 BPE 数分层。
 
+## 全局融合消融与匹配 Oracle
+
+补齐 Standard Fine-only 的三个种子。两种 Oracle 策略使用真实修复 Diff 构造 32 BPE 块分数，复用 Predicted 的中心优先检索、96 位置上下文预算、填充与 512 位置打包。Oracle 的 Train、Valid 和 Test 均读取真实修复配对，数据用于特权诊断。全局向量仍取当前函数的冻结表示。各新增分类器从原始预训练 UniXcoder 独立微调。[对照协议与机制结果](results/matched_oracle_512/report.md)
+
+Predicted Fusion、Predicted Fine-only、Oracle Fusion、Oracle Fine-only 的三种子整体 Test MCC 分别为 **0.1065 ± 0.0158**、**0.0587 ± 0.0409**、**0.1971 ± 0.0142** 和 **0.1867 ± 0.0171**。Fusion 条件下，Oracle 将 UniXcoder 长函数的实际修改 BPE 保留率从 48.12% 提高到 85.22%，统一 CodeBERT 长组的 MCC 从 0.1007 提高到 0.2275。正式 Predicted 配置保留 Global Fusion。本轮的匹配结果优先支持改进信息选择。[完整分层指标](results/matched_oracle_512/summary.json) · [LongVul 与三个外部基线的统一对比](results/matched_oracle_512/report.md#统一外部对比)
+
+以下命令使用关系编码实验已经生成的三个种子块级索引检查点，以及仓库已有的 Predicted 结果。
+
+```bash
+export CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 RAYON_NUM_THREADS=4
+PYTHON=/home/phy/miniconda3/envs/vul-detect/bin/python
+"$PYTHON" matched_oracle_experiment.py smoke
+for seed in 1234 123456; do
+    "$PYTHON" relation_encoding_experiment.py run --seed "$seed" --methods standard_fine_only
+done
+for seed in 42 1234 123456; do
+    "$PYTHON" matched_oracle_experiment.py run --seed "$seed"
+done
+"$PYTHON" -m diagnostics.matched_oracle
+```
+
 ## 关系感知精细编码
 
 固定关系排序检索布局及 512 位置精细输入，用四组匹配对照比较显式语法关系偏置与全局融合。三类偏置对应外围条件、声明和前置赋值，每类一个零初始化标量，所有层和注意力头共享。只映射完整保留的关系两端，普通注意力连接和 padding 掩码沿用原实现。各组独立微调精细编码器。[实验与机制报告](results/relation_encoding_512/report.md)
