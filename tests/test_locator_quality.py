@@ -10,15 +10,15 @@ from test_predicted_diff import TOKENIZER, character_source
 
 class OracleNoiseTest(unittest.TestCase):
     def test_reserved_alternatives_are_deterministic_disjoint_and_width_matched(self):
-        anchors = [(13, 16), (21, 30), (55, 56)]
+        repair_spans = [(13, 16), (21, 30), (55, 56)]
         edited = [(11, 18), (20, 41), (53, 57)]
-        slots = matched_slots(110, anchors, edited, "42/valid/23")
-        self.assertEqual(slots, matched_slots(110, anchors, edited, "42/valid/23"))
+        slots = matched_slots(110, repair_spans, edited, "42/valid/23")
+        self.assertEqual(slots, matched_slots(110, repair_spans, edited, "42/valid/23"))
         used = []
         for (a,b), (lo,hi), _ in slots:
             self.assertEqual(b-a, hi-lo)
             self.assertFalse(intersects((lo, hi), edited))
-            self.assertFalse(intersects((lo-1, hi+1), anchors+used))
+            self.assertFalse(intersects((lo-1, hi+1), repair_spans+used))
             used.append((lo, hi))
 
     def test_no_fabricated_alternative_when_edit_fills_function(self):
@@ -31,8 +31,8 @@ class OracleNoiseTest(unittest.TestCase):
         edits = dict.fromkeys((*EDIT_TYPES, *GAP_TYPES), ())
         edits["replace"] = [(100, 115), (350, 380), (800, 815)]
         policy = dict(top_k=4, anchor_budget=127)
-        anchors, edited = oracle_regions(source, edits, policy)
-        slots = matched_slots(len(source.ids), anchors, edited, "42/valid/1")
+        repair_spans, edited = oracle_regions(source, edits, policy)
+        slots = matched_slots(len(source.ids), repair_spans, edited, "42/valid/1")
         order = sorted((priority, 0, j) for j, (_,_,priority) in enumerate(slots))
         source_plan = rows, [source], [edits], [slots], order, 0.
         attempted = 0
@@ -45,7 +45,7 @@ class OracleNoiseTest(unittest.TestCase):
             self.assertEqual(data[0]["anchor_positions"], cost)
             self.assertGreaterEqual(stats["attempted_regions"], attempted)
             attempted = stats["attempted_regions"]
-        self.assertEqual(stats["replaced_regions"], len(anchors))
+        self.assertEqual(stats["replaced_regions"], len(repair_spans))
 
     def test_curve_does_not_extrapolate_outside_observed_points(self):
         counts = crossing_report([(.6, .14), (.5, .09), (.4, .11)])

@@ -130,12 +130,12 @@ class SelectedData(Dataset):
         for i, (row, source) in enumerate(zip(rows, sources, strict=True)):
             graph, graph_status = selection.available_graph(graphs[i] if graphs is not None else None, weights)
             active_weights = weights if graph is not None else (0, 0)
-            spans, anchors, steps, retained = selection.choose(
+            spans, repair_spans, steps, retained = selection.choose(
                 source, method, budget, weights=active_weights, graph=graph,
                 scores=scores[i] if scores is not None else None, edits=edits[i] if edits is not None else None,
                 parser=self.parser, continuous_fill=continuous_fill)
             packed, length = pack_fixed(source.ids, range(len(source.ids)), spans, tokenizer, max_length=budget+2)
-            if length != occupied(spans)+2 or any(not contains(span, spans) for span in (*retained, *anchors)):
+            if length != occupied(spans)+2 or any(not contains(span, spans) for span in (*retained, *repair_spans)):
                 raise ValueError("Packed input cost or preselected coverage differs from selection")
             if len(source.ids) > budget and length != budget+2:
                 raise ValueError("Long input failed to fill its position budget")
@@ -146,7 +146,7 @@ class SelectedData(Dataset):
             if any(weights):
                 self.metadata[-1]["dependency_status"] = graph_status
                 self.metadata[-1]["native_graph_status"] = graphs[i]["status"]
-            self.decisions.append((spans, anchors, steps, retained))
+            self.decisions.append((spans, repair_spans, steps, retained))
         self.seconds = perf_counter()-started
 
     def __len__(self):
@@ -168,11 +168,11 @@ def report_data(data, sources, probabilities, path, *, include_pairs=False):
     probabilities = [None]*len(data) if probabilities is None else probabilities
     for meta, example, decisions, source, score in zip(data.metadata, data.examples, data.decisions, sources,
                                                         probabilities, strict=True):
-        spans, anchors, steps, _ = decisions
+        spans, repair_spans, steps, _ = decisions
         classification = {} if score is None else dict(probability=score, prediction=int(score > .5))
         rows.append(dict(**meta, **classification, input_length=example["length"],
                          source_bpe=sum(b-a for a,b in spans), source_runs=original_runs(source, spans),
-                         simplified_runs=spans, oracle_anchors=anchors, optimizer_steps=steps))
+                         simplified_runs=spans, oracle_anchors=repair_spans, optimizer_steps=steps))
     if include_pairs:
         active = [ex["fixed"][0, :ex["length"]].tolist() for ex in data.examples]
         for i in range(0, len(active), 2):
@@ -565,11 +565,11 @@ def audit_fill(tokenizer):
         before = read_predictions(RESULTS / method / "test.csv.gz")
         after = report_data(selected, sources, None, None, include_pairs=True)
         changed_lengths = []
-        for original, revised, (_, anchors, _, retained), source in zip(
+        for original, revised, (_, repair_spans, _, retained), source in zip(
                 before, after, selected.decisions, sources, strict=True):
             reference_spans = merge(original["simplified_runs"])
             if (any(str(original[key]) != str(revised[key]) for key in membership)
-                    or merge(original["oracle_anchors"]) != anchors
+                    or merge(original["oracle_anchors"]) != repair_spans
                     or any(not contains(span, reference_spans) for span in retained)):
                 raise ValueError(f"{method}: fixed selection differs for {original['sample_key']}")
             if reference_spans != revised["simplified_runs"]:

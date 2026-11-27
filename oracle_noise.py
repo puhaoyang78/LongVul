@@ -1,4 +1,4 @@
-"""Privileged 512-position anchor-replacement experiment, matched to Predicted-Diff."""
+"""Privileged 512-position repair-region replacement experiment, matched to Predicted-Diff."""
 import csv
 import gzip
 import json
@@ -50,20 +50,20 @@ def oracle_regions(source, edits, policy):
     return reserve_blocks([], candidates, budget=policy["anchor_budget"]), merge([*real, *proxy])
 
 
-def matched_slots(size, anchors, edited, seed):
-    """Reserve disjoint, equal-width alternatives in unchanged source for each anchor."""
+def matched_slots(size, repair_spans, edited, seed):
+    """Reserve disjoint, equal-width alternatives in unchanged source for each repair region."""
     rng = Random(seed)
 
     def guarded(span):
         a, b = span
         return max(0, a-1), min(size, b+1)
 
-    blocked = merge([*edited, *(guarded(s) for s in anchors)])
-    slots = [None]*len(anchors)
+    blocked = merge([*edited, *(guarded(s) for s in repair_spans)])
+    slots = [None]*len(repair_spans)
     # Place wider spans first so short spans do not consume their only feasible gap.
-    priorities = [rng.random() for _ in anchors]
-    for i in sorted(range(len(anchors)), key=lambda i: (anchors[i][0]-anchors[i][1], i)):
-        a, b = anchors[i]
+    priorities = [rng.random() for _ in repair_spans]
+    for i in sorted(range(len(repair_spans)), key=lambda i: (repair_spans[i][0]-repair_spans[i][1], i)):
+        a, b = repair_spans[i]
         width = b-a
         possible = [(left, right-width+1) for left, right in gaps(blocked, 0, size) if right-left >= width]
         total = sum(hi-lo for lo, hi in possible)
@@ -87,8 +87,8 @@ def prepare_split(split, tokenizer, policy):
     edits = paired_annotations(sources)
     plans = []
     for row, source, edit in zip(rows, sources, edits, strict=True):
-        anchors, edited = oracle_regions(source, edit, policy)
-        plans.append(matched_slots(len(source.ids), anchors, edited, f"{SEED}/{row['sample_key']}"))
+        repair_spans, edited = oracle_regions(source, edit, policy)
+        plans.append(matched_slots(len(source.ids), repair_spans, edited, f"{SEED}/{row['sample_key']}"))
     ranking = sorted((priority, i, j) for i, slots in enumerate(plans) for j, (_, _, priority) in enumerate(slots))
     return rows, sources, edits, plans, ranking, perf_counter()-started
 
@@ -103,11 +103,11 @@ def noise_data(prepared, tokenizer, rate):
     def examples():
         for i, (source, slots) in enumerate(zip(sources, plans, strict=True)):
             before, after, tries, done = [], [], 0, 0
-            for j, (anchor, replacement, _) in enumerate(slots):
+            for j, (repair_span, replacement, _) in enumerate(slots):
                 attempted = (i,j) in chosen
                 use_replacement = attempted and replacement is not None
-                before.append(anchor)
-                after.append(replacement if use_replacement else anchor)
+                before.append(repair_span)
+                after.append(replacement if use_replacement else repair_span)
                 tries += attempted
                 done += use_replacement
             spans = merge(after)
@@ -191,7 +191,7 @@ def plot_curve(results):
                xlabel="True modification BPE retained (%)", ylabel="MCC")
         ax.margins(x=.12, y=.18)
         ax.legend(frameon=False)
-    fig.suptitle("Oracle anchor replacement under a 127-position cap")
+    fig.suptitle("Oracle repair-region replacement under a 127-position cap")
     fig.savefig(RESULTS / "retention_mcc.png", dpi=180)
     plt.close(fig)
     return thresholds

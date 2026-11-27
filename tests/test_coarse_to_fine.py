@@ -6,8 +6,9 @@ import torch
 
 from coarse_encoding import (INDEX_WIDTH, QUERY_HEADS, BlockData, CoarseClassifier, ContextIndexer,
                              block_mass, collate_blocks, repair_block_mass)
-from coarse_retrieval import block_ends, lengths, part_overlap, retrieve, uncovered
-from context_selection import contains, merge, occupied, source_parser
+from coarse_retrieval import Layout, block_ends, lengths, part_overlap, retrieve, selected_statement_scores, uncovered
+from context_selection import contains, merge, occupied, prefer_context, source_parser
+from diagnostics.context_retrieval import group_counts, related_context_counts, score_bands
 from repair_oracle import EDIT_TYPES, GAP_TYPES
 
 
@@ -34,6 +35,44 @@ class BlockEncodingTest(unittest.TestCase):
 
 
 class RetrievalTest(unittest.TestCase):
+    def test_relation_audit_distinguishes_retrieved_from_filled_context(self):
+        source = SimpleNamespace(keep=list(range(0,96,2)))
+        centers = [(0,16),(24,32)]
+        links = [("condition",(2,4),(20,24)),("assignment",(24,30),(36,40))]
+        layouts = [Layout(merge([*centers,(20,24),(36,40)]),centers,[(20,24)],[(36,40)]),
+                   Layout(merge([*centers,(36,40)]),centers,[(36,40)],[])]
+        counts = related_context_counts(source,[16,24,32,48],[.1,.8,.5,.6],layouts,links)
+        report = group_counts([counts],[96])["overall"]
+        self.assertEqual(score_bands({(2,4):.2,(24,30):.2}),{(2,4):"tied",(24,30):"tied"})
+        self.assertEqual(report["importance"]["lower"]["relation_based_after_context_rate"],1.)
+        self.assertEqual(report["importance"]["upper"]["relation_based_after_context_rate"],0.)
+        self.assertEqual(report["importance"]["upper"]["relation_based_in_fine_input_rate"],1.)
+        self.assertEqual(report["distance"]["33-128"]["candidates"],1)
+        self.assertEqual(report["distance"]["1-32"]["candidates"],1)
+        self.assertEqual(report["relation"]["condition"]["candidates"],1)
+
+    def test_statement_score_uses_maximum_over_selected_blocks_only(self):
+        links = [("condition",(60,70),(0,8)),("assignment",(80,110),(19,28))]
+        ends = [32,64,96,128,160]
+        ranking = [.8,.4,.2,.9,.1]
+        self.assertEqual(selected_statement_scores(ranking,ends,[(32,96)],links),
+                         {(60,70):.4,(80,110):.2})
+
+    def test_importance_changes_context_priority_and_sums_shared_relations(self):
+        blocks = [(64,96),(128,160)]
+        low,high = (70,85),(130,150)
+        left,right = (10,16),(170,176)
+        links = [("condition",low,left),("declaration",high,right)]
+        budget = occupied(blocks)+7
+        reference = prefer_context(blocks,links,budget=budget)
+        guided = prefer_context(blocks,links,budget=budget,statement_scores={low:.1,high:.9})
+        self.assertEqual(reference,merge([*blocks,left]))
+        self.assertEqual(guided,merge([*blocks,right]))
+        self.assertEqual(occupied(guided),budget)
+        shared = prefer_context(blocks,[*links,("assignment",high,left)],budget=budget,
+                                statement_scores={low:.1,high:.9})
+        self.assertEqual(shared,reference)
+
     def test_zero_budget_matches_historical_partial_block_and_short_passthrough(self):
         source = SimpleNamespace(ids=range(1600))
         ends = block_ends(len(source.ids),[],[],32,False)

@@ -109,14 +109,14 @@ def prepare_side(source, tokenizer, edits, *, with_context, parser):
     code, ids, offsets = source
     keep, boundaries = input_layout(code, ids, offsets)
     mapped = compact_edits(keep, edits)
-    anchors = reserve_blocks([], [span for kind in EDIT_TYPES for span in mapped[kind]])
-    anchors = reserve_blocks(anchors, [span for kind in GAP_TYPES for span in mapped[kind]])
-    selected, parse_error = anchors, None
-    if len(keep) > BUDGET and with_context and anchors and occupied(anchors) < BUDGET:
-        links, parse_error = related_statements(code, offsets, keep, anchors, parser)
-        selected = prefer_context(anchors, {link for link in links if link[0] in CONTEXT_TYPES})
+    repair_spans = reserve_blocks([], [span for kind in EDIT_TYPES for span in mapped[kind]])
+    repair_spans = reserve_blocks(repair_spans, [span for kind in GAP_TYPES for span in mapped[kind]])
+    selected, parse_error = repair_spans, None
+    if len(keep) > BUDGET and with_context and repair_spans and occupied(repair_spans) < BUDGET:
+        links, parse_error = related_statements(code, offsets, keep, repair_spans, parser)
+        selected = prefer_context(repair_spans, {link for link in links if link[0] in CONTEXT_TYPES})
     example = pack_selected(ids, keep, boundaries, selected, tokenizer)
-    example.update(repair_bpe_spans=edits, oracle_anchor_runs=raw_runs(keep, anchors),
+    example.update(repair_bpe_spans=edits, oracle_anchor_runs=raw_runs(keep, repair_spans),
                    parse_error=parse_error)
     return example
 
@@ -175,7 +175,7 @@ def repair_retention(oracle_root, baseline_root, *, extra_predictions=None):
     reference = predictions["oracle_diff"]
     for first, second in zip(reference, predictions["oracle_diff_context"], strict=True):
         if any(first[key] != second[key] for key in ("repair_bpe_spans", "oracle_anchor_runs")):
-            raise ValueError("the two repair oracles disagree on edits or reserved anchors")
+            raise ValueError("the two repair oracles disagree on edits or reserved repair regions")
     result = {}
     for method, rows in predictions.items():
         observations = []

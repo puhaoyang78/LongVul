@@ -56,13 +56,13 @@ def plan_regions(source, parser):
     base, limits = base_windows(source.boundaries)
     base = merge(base)
     links, error = related_statements(source.code, source.offsets, source.keep, None, parser)
-    by_anchor = {}
-    for kind, anchor, context in sorted(links):
+    relations_by_statement = {}
+    for kind, statement, context in sorted(links):
         if kind in CONTEXT_TYPES:
-            by_anchor.setdefault(anchor, []).append((kind, anchor, context))
+            relations_by_statement.setdefault(statement, []).append((kind, statement, context))
     candidates, feasible, seen = [], [], set()
-    for anchor, edges in sorted(by_anchor.items()):
-        spans = tuple(merge([anchor, *(link[2] for link in edges)]))
+    for statement, edges in sorted(relations_by_statement.items()):
+        spans = tuple(merge([statement, *(link[2] for link in edges)]))
         joined = merge([*base, *spans])
         cost = occupied(joined)-occupied(base)
         if occupied(joined) > BUDGET:
@@ -73,7 +73,7 @@ def plan_regions(source, parser):
         seen.add(spans)
         novel = tuple(seg for a,b in spans for seg in gaps(base, a, b))
         candidates.append(Candidate(spans, novel, cost))
-    return Plan(base, limits, candidates, tuple(feasible), len(by_anchor), error)
+    return Plan(base, limits, candidates, tuple(feasible), len(relations_by_statement), error)
 
 
 def target_scores(source, plan, edits):

@@ -60,7 +60,7 @@ def uniform(source, budget, cuts, parser=None):
     return uniform_fill(spans, cuts, limits, budget=budget, contiguous=False), spans
 
 
-def repair_anchors(edits, budget):
+def select_repair_regions(edits, budget):
     actual = [span for kind in EDIT_TYPES for span in edits[kind]]
     proxy = [span for kind in GAP_TYPES for span in edits[kind]]
     base = reserve_blocks([], actual, budget=budget)
@@ -215,10 +215,10 @@ def choose(source, method, budget, *, weights=(0, 0), edits=None, scores=None, g
     if (method in {"predicted", "longvul"}) != (scores is not None):
         raise ValueError("Predicted methods require source-only localizer scores")
     n = len(source.ids)
-    anchors = repair_anchors(edits, budget) if privileged else []
+    repair_spans = select_repair_regions(edits, budget) if privileged else []
     if n <= budget:
         full = [(0, n)] if n else []
-        return full, anchors, 0, full
+        return full, repair_spans, 0, full
     lines = source.boundaries if source.boundary_budget == budget else line_boundaries(
         source.code, source.source_offsets, range(n), budget)
     if method in {"uniform", "syntax"}:
@@ -226,24 +226,24 @@ def choose(source, method, budget, *, weights=(0, 0), edits=None, scores=None, g
         return packed, [], 0, spans
     steps = 0
     if method == "oracle_syntax":
-        spans = anchors
-        if anchors:
-            links, _ = related_statements(source.code, source.source_offsets, range(n), anchors, parser)
-            spans = prefer_context(anchors, {link for link in links if link[0] in CONTEXT_TYPES}, budget=budget)
+        spans = repair_spans
+        if repair_spans:
+            links, _ = related_statements(source.code, source.source_offsets, range(n), repair_spans, parser)
+            spans = prefer_context(repair_spans, {link for link in links if link[0] in CONTEXT_TYPES}, budget=budget)
     elif scores is not None:
         base, candidates = global_regions(source, budget)
         seeds = predicted_candidates(source, candidates, scores, budget)
         spans, steps = optimize(source.regions, base, seeds, graph or {}, weights, budget, scores=scores)
     elif any(weights):
-        seeds = region_ids(source.regions, anchors, touch=True)
-        spans, steps = optimize(source.regions, anchors, seeds, graph, weights, budget)
+        seeds = region_ids(source.regions, repair_spans, touch=True)
+        spans, steps = optimize(source.regions, repair_spans, seeds, graph, weights, budget)
     else:
-        spans = anchors
+        spans = repair_spans
     cuts = [0, *(region.end for region in source.regions)] if any(weights) or scores is not None else lines
-    limit = max(MAX_FRAGMENTS, len(anchors)) if any(weights) or scores is not None else None
+    limit = max(MAX_FRAGMENTS, len(repair_spans)) if any(weights) or scores is not None else None
     unit_at = None
     if continuous_fill:
         cuts, unit_at = completion_units(source)
     packed = uniform_fill(spans, cuts, physical_limits(lines), budget=budget, fragment_limit=limit,
                           contiguous=continuous_fill, unit_at=unit_at)
-    return packed, anchors, steps, spans
+    return packed, repair_spans, steps, spans

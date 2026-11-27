@@ -84,7 +84,14 @@ def ranked_fill(blocks, ranked, selected):
     raise ValueError("Ranked retrieval did not fill the available budget")
 
 
-def retrieve(scores, source, ends, context_budget, parser=None):
+def selected_statement_scores(scores, ends, centers, links):
+    selected_blocks = [(block,a,b) for low,high in centers for block,a,b in part_overlap(low,high,ends)]
+    return {statement:max(float(scores[block]) for block,a,b in selected_blocks
+                          if a<statement[1] and statement[0]<b)
+            for statement in {statement for _,statement,_ in links}}
+
+
+def retrieve(scores, source, ends, context_budget, parser=None, *, importance_guided=False, candidate_relations=None):
     if len(scores) != len(ends) or not 0 <= context_budget < BUDGET:
         raise ValueError("Invalid scores or context budget")
     length = len(source.ids)
@@ -107,8 +114,11 @@ def retrieve(scores, source, ends, context_budget, parser=None):
         return Layout(spans,centers,[],uncovered(spans,centers))
 
     links, _ = related_statements(source.code,source.offsets,source.keep,centers,parser)
-    selected = prefer_context(centers,(link for link in links if link[0] in CONTEXT_TYPES),
-                              budget=occupied(centers)+context_budget)
+    links = sorted(link for link in links if link[0] in CONTEXT_TYPES)
+    if candidate_relations is not None:
+        candidate_relations.extend(links)
+    statement_scores = selected_statement_scores(scores,ends,centers,links) if importance_guided else None
+    selected = prefer_context(centers,links,budget=occupied(centers)+context_budget,statement_scores=statement_scores)
     spans = selected if occupied(selected)==BUDGET else ranked_fill(blocks,ranked,selected)
     return Layout(spans,centers,uncovered(selected,centers),uncovered(spans,selected))
 

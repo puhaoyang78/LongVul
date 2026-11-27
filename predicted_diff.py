@@ -1,4 +1,4 @@
-"""Replace the 512-position Oracle-Diff anchors with source-only repair predictions."""
+"""Replace the 512-position Oracle-Diff repair regions with source-only repair predictions."""
 from collections import Counter
 from dataclasses import dataclass
 import json
@@ -70,15 +70,15 @@ def region_targets(sources, edits):
     return weak_targets(sources, mapped)
 
 
-def prepare_example(source, scores, tokenizer, top_k, anchor_budget):
-    if len(scores) != len(source.regions) or not 0 < anchor_budget <= BUDGET//2 or top_k <= 0:
-        raise ValueError("Invalid source scores or predicted-anchor policy")
-    anchors = []
+def prepare_example(source, scores, tokenizer, top_k, region_budget):
+    if len(scores) != len(source.regions) or not 0 < region_budget <= BUDGET//2 or top_k <= 0:
+        raise ValueError("Invalid source scores or predicted-region policy")
+    predicted_spans = []
     if len(source.ids) > BUDGET:
         ranked = np.argsort(-scores, kind="stable")[:top_k]
-        anchors = reserve_blocks([], [source.regions[i].span for i in ranked], budget=anchor_budget)
-    example = pack_selected(source.raw_ids, source.keep, source.boundaries, anchors, tokenizer)
-    example.update(predicted_anchor_runs=raw_runs(source.keep, anchors), predicted_anchor_positions=occupied(anchors))
+        predicted_spans = reserve_blocks([], [source.regions[i].span for i in ranked], budget=region_budget)
+    example = pack_selected(source.raw_ids, source.keep, source.boundaries, predicted_spans, tokenizer)
+    example.update(predicted_anchor_runs=raw_runs(source.keep, predicted_spans), predicted_anchor_positions=occupied(predicted_spans))
     return example
 
 

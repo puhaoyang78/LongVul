@@ -456,9 +456,10 @@ def report():
                 fields[f"retention_{kind}"] = pipeline.seed_stats(
                     [run[axis]["edit_retention"][group][kind]["fraction"] for run in runs])
             layouts = [run[axis]["layout"][group] for run in runs]
-            if all("same_anchor_context" in layout for layout in layouts):
-                fields["same_anchor_context"] = pipeline.seed_stats(
-                    [layout["same_anchor_context"]["fraction"] for layout in layouts])
+            retention = [layout.get("shared_statement_context",layout.get("same_anchor_context"))
+                         for layout in layouts]
+            if all(retention):
+                fields["shared_statement_context"] = pipeline.seed_stats([x["fraction"] for x in retention])
             aggregate[axis][group] = fields
     comparison = {name:benchmark["three_seed"][name] for name in ("simplified","matched_uniform","context_aware")}
     write_json(RESULTS/"summary.json",dict(seeds=list(SEEDS),selected_method=winner,methods=methods,

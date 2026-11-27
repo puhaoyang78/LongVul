@@ -313,10 +313,10 @@ def smoke_repair(tokenizer):
         shared = None
         for method in repair.METHODS:
             built = repair.prepare_pair(*sources, tokenizer, method=method, parser=parser)
-            anchor_runs = [ex["oracle_anchor_runs"] for ex in built]
-            if shared is not None and shared != anchor_runs:
-                raise ValueError("repair oracle arms reserved different anchors")
-            shared = anchor_runs
+            repair_runs = [ex["oracle_anchor_runs"] for ex in built]
+            if shared is not None and shared != repair_runs:
+                raise ValueError("repair oracle arms reserved different repair regions")
+            shared = repair_runs
             retained = []
             for side, (ex, row, (code, ids, offsets)) in enumerate(zip(built, pair, sources, strict=True)):
                 positions = [p for p in ex["fixed"][1, :ex["length"]].tolist() if p >= 0]
@@ -335,8 +335,8 @@ def smoke_repair(tokenizer):
                 expected_ids.append(tokenizer.sep_token_id)
                 if expected_ids != ex["fixed"][0, :ex["length"]].tolist():
                     raise ValueError("repair input does not match mapped source BPEs")
-                if any(not context.contains(span, visible) for span in anchor_runs[side]):
-                    raise ValueError("reserved repair anchor is missing from the input")
+                if any(not context.contains(span, visible) for span in repair_runs[side]):
+                    raise ValueError("reserved repair region is missing from the input")
                 retention = {k: [repair.overlap_bpe(spans, visible), sum(j-i for i, j in spans)]
                              for k, spans in ex["repair_bpe_spans"].items()}
                 if name in {"pure_insert", "pure_delete"}:
@@ -346,7 +346,7 @@ def smoke_repair(tokenizer):
                     other = f"{kind}_gap" if has_code else kind
                     if retention[expected][0] == 0 or retention[other][1] != 0:
                         raise ValueError(f"incorrect actual/gap mapping for {kind}")
-                retained.append(dict(length=ex["length"], edit_bpe=retention, anchor_runs=anchor_runs[side]))
+                retained.append(dict(length=ex["length"], edit_bpe=retention, anchor_runs=repair_runs[side]))
                 examples[method].append(dict(ex, label=row["target"]))
             checked[name]["methods"][method] = retained
 

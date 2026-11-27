@@ -1,7 +1,6 @@
 """Compare block and Token matching with the published LongVul retrieval and fine encoder."""
 import argparse
 from collections import Counter
-import gc
 import json
 from itertools import pairwise
 from statistics import mean
@@ -19,7 +18,7 @@ from compaction import BUDGET, MAX_LENGTH
 from context_selection import merge
 from index_adaptation import grouped_layout_change, published_setup, reference_runs
 from locator_quality import context_encoder_batches, load_context_encoder
-from paired import AdamW, DATA, ROOT, SEED, UNIX_BASE, fit_classifier, load_tokenizer, prime_source_rows, to_gpu
+from paired import AdamW, DATA, ROOT, SEED, UNIX_BASE, load_tokenizer, prime_source_rows, to_gpu
 from predicted_diff import fp32_classifier, load_sources, paired_annotations
 from repair_oracle import EDIT_TYPES, GAP_TYPES, overlap_bpe
 from rgcl.artifacts import read_json, write_json
@@ -31,7 +30,7 @@ RESULTS = ROOT/"results"/"fine_indexing_512"
 WEIGHTS = ROOT/"checkpoints"/RESULTS.name
 MATCHING = dict(B0="block", B1="token_mean", B2="token_logmeanexp")
 METHOD_BY_MATCHING = {matching: method for method,matching in MATCHING.items()}
-REPAIR_WEIGHT = 1.
+REPAIR_WEIGHT = pipeline.REPAIR_INDEX_WEIGHT
 
 
 def token_cache(split, name, tokenizer, *, encoder=None):
@@ -81,45 +80,6 @@ def cache(tokenizer):
     write_json(RESULTS/"token_cache.json",costs)
 
 
-def fit_index(train,valid,seed,method):
-    width = train.vectors.shape[-1]
-    matching = MATCHING[method]
-    root,weights = (pipeline.seed_root(parent,seed)/"coarse" for parent in (RESULTS,WEIGHTS))
-    if (root/method/"fit.json").is_file():
-        return read_json(root/method/"fit.json")
-    labels = []
-    for source,ends,edits in zip(train.sources,train.ends,paired_annotations(train.sources),strict=True):
-        mass = repair_block_mass(source,ends,edits,(*EDIT_TYPES,*GAP_TYPES))
-        labels.append(mass/mass.sum().clamp_min(1))
-    for name,supervision,weight,token_match in (
-        ("global","global",0.,"block"), (method,"joint",REPAIR_WEIGHT,matching)
-    ):
-        area,location = root/name,weights/name
-        if (area/"fit.json").is_file():
-            continue
-        use_tokens = token_match!="block"
-        validation = BlockData(valid.rows,valid.ends,valid.vectors,token_features=valid.token_features if use_tokens else None)
-        data = BlockData(train.rows,train.ends,train.vectors,labels if weight else None,
-                         token_features=train.token_features if use_tokens else None)
-        config = dict(pipeline.run_config(name,seed),stage="coarse",block_layout="fixed32",
-                      matching=token_match,supervision=supervision,repair_weight=weight,
-                      precision="FP32 on cached FP16 states",initialization="fresh seeded weights",
-                      loss="function BCE + labeled function mean KL" if weight else "function BCE")
-        set_seed(seed)
-        model = CoarseClassifier(width,supervision,weight,matching=token_match)
-        if weight:
-            config["initialization"] = "fresh Q/K; auxiliary head from newly trained same-seed global fit"
-            update = model.load_state_dict(torch.load(weights/"global"/"best.pt",weights_only=True,map_location="cpu"),
-                                           strict=False)
-            if set(update.missing_keys)!={"indexer.query.weight","indexer.key.weight"} or update.unexpected_keys:
-                raise ValueError("Newly trained auxiliary head did not match the joint model")
-        best,history = fit_classifier(model.cuda(),data,validation,location,area,config,collator=collate_blocks)
-        write_json(area/"fit.json",pipeline.fitted(config,best,history,len(validation)))
-        del model
-        gc.collect()
-    return read_json(root/method/"fit.json")
-
-
 def run(tokenizer,seed,method):
     area,weights = (pipeline.seed_root(parent,seed)/method for parent in (RESULTS,WEIGHTS))
     if (area/"metrics.json").is_file():
@@ -129,7 +89,8 @@ def run(tokenizer,seed,method):
     if matching!="block":
         for name,split in (("train",train),("valid",valid)):
             token_cache(split,name,tokenizer)
-    index_fit = fit_index(train,valid,seed,method)
+    index_fit = pipeline.fit_repair_indexer(train,valid,seed,method,area.parent/"coarse",weights.parent/"coarse",
+                                           matching=matching)
     state = weights.parent/"coarse"/method/"best.pt"
     index = CoarseClassifier(train.vectors.shape[-1],"joint",matching=matching)
     index.load_state_dict(torch.load(state,weights_only=True,map_location="cpu"),strict=True)
@@ -159,7 +120,7 @@ def detection_audit(rows,sources,ends,edits,predictions,reference,retrained_bloc
     totals = [lengths(e) for e in modified]
     retained = [overlap_bpe(a,b) for a,b in zip(visible,modified,strict=True)]
     block_rows = []
-    for source,cut,edit,runs,anchor in zip(sources,ends,edits,visible,centers,strict=True):
+    for source,cut,edit,runs,center_spans in zip(sources,ends,edits,visible,centers,strict=True):
         counts = Counter()
         if len(source.ids)>BUDGET:
             mass = repair_block_mass(source,cut,edit,EDIT_TYPES).int().tolist()
@@ -170,7 +131,7 @@ def detection_audit(rows,sources,ends,edits,predictions,reference,retrained_bloc
                 first,last = source.keep[a],source.keep[b-1]+1
                 selected = overlap_bpe(runs,[(first,last)])
                 counts[label,"blocks"] += 1
-                counts[label,"centers"] += int(overlap_bpe(anchor,[(a,b)])==BLOCK)
+                counts[label,"centers"] += int(overlap_bpe(center_spans,[(a,b)])==BLOCK)
                 counts[label,"visible_any"] += int(selected>0)
                 counts[label,"visible_full"] += int(selected==BLOCK)
                 counts[label,"visible_bpe"] += selected
@@ -264,8 +225,10 @@ def report(tokenizer):
                         [r["edit_retention"][group][label]["fraction"] for r in results])
                 entry["fine_pair_collision_rate"] = pipeline.seed_stats(
                     [r["layout"][group]["fine_pair_collision_rate"] for r in results])
-                entry["same_anchor_context"] = pipeline.seed_stats(
-                    [r["layout"][group].get("same_anchor_context",{}).get("fraction") for r in results])
+                layouts = [r["layout"][group] for r in results]
+                entry["shared_statement_context"] = pipeline.seed_stats(
+                    [layout.get("shared_statement_context",layout.get("same_anchor_context",{})).get("fraction")
+                     for layout in layouts])
         average[name]["cost"] = {
             key:pipeline.seed_stats([getter(runs[seed][name]) for seed in SEEDS])
             for key,getter in (

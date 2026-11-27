@@ -110,7 +110,7 @@ class WindowData:
                 if training and len(spans) > SEA_TRAIN_WINDOWS:
                     selected = [random.choice(selected) for _ in range(SEA_TRAIN_WINDOWS)]
                 if not training:
-                    # Author's retrieval predict() includes its anchor twice.
+                    # Author's retrieval predict() includes the prefix view twice.
                     selected.insert(0, 0)
             spans_used = [spans[i] for i in selected]
             inputs.append(ids[selected])

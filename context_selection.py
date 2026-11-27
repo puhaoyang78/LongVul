@@ -190,33 +190,33 @@ def related_statements(code, offsets, keep, base, parser, *, units=None):
 
     base_bytes = [(starts[start], ends[end-1]) for start, end in base] if base is not None else None
     scopes = [(None, None)]
-    definitions, anchors, named_sites = defaultdict(list), [], set()
+    definitions, statements, named_sites = defaultdict(list), [], set()
     stack = [(root, 0, None)]
     while stack:
-        node, scope, anchor = stack.pop()
+        node, scope, statement = stack.pop()
         kind = node.type
         if kind in CONTROL or kind in {"compound_statement", "else_clause", "lambda_expression"}:
             header = control_header(node) if kind in CONTROL else None
             outer = scope
             scope = len(scopes)
             scopes.append((outer, header))
-            anchor = None
+            statement = None
             if header:
                 span = bpe(*header[0])
                 if units is not None and span[0] < span[1]:
                     units.add(span)
                 if base is not None and intersects(span, base):
-                    anchor = (span, scope, None, {})
-                    anchors.append(anchor)
+                    statement = (span, scope, None, {})
+                    statements.append(statement)
         if kind in STATEMENT:
-            anchor = None
+            statement = None
             if not node.has_error:
                 span = bpe(node.start_byte, node.end_byte)
                 if units is not None and span[0] < span[1]:
                     units.add(span)
                 if span[0] < span[1] and (base is None or intersects(span, base)):
-                    anchor = (span, scope, node, {})
-                    anchors.append(anchor)
+                    statement = (span, scope, node, {})
+                    statements.append(statement)
                 if kind == "declaration":
                     names = [declarator_name(d) for d in node.children_by_field_name("declarator")]
                     for name in (d for d in names if d is not None):
@@ -227,56 +227,58 @@ def related_statements(code, offsets, keep, base, parser, *, units=None):
                     lhs = expr.child_by_field_name("left") if expr.type == "assignment_expression" else None
                     if lhs is not None and lhs.type == "identifier":
                         definitions[scope, lhs.text, "assignment"].append(span)
-        if kind == "identifier" and anchor is not None and node.start_byte not in named_sites:
+        if kind == "identifier" and statement is not None and node.start_byte not in named_sites:
             if base_bytes is None or intersects((node.start_byte, node.end_byte), base_bytes):
                 span = bpe(node.start_byte, node.end_byte)
-                if (base is None or contains(span, base)) and contains(span, [anchor[0]]):
-                    anchor[3].setdefault(node.text, span[0])
-        stack.extend((child, scope, anchor) for child in reversed(node.named_children))
+                if (base is None or contains(span, base)) and contains(span, [statement[0]]):
+                    statement[3].setdefault(node.text, span[0])
+        stack.extend((child, scope, statement) for child in reversed(node.named_children))
 
     links = set()
-    for anchor, scope, stmt, names in anchors:
-        if base is not None and not contains(anchor, base):
-            links.add(("completion", anchor, anchor))
+    for statement, scope, stmt, names in statements:
+        if base is not None and not contains(statement, base):
+            links.add(("completion", statement, statement))
         cursor = scope
         while cursor is not None:
             cursor, header = scopes[cursor]
-            if header and contains(anchor, [bpe(*header[1])]):
-                links.add(("condition", anchor, bpe(*header[0])))
+            if header and contains(statement, [bpe(*header[1])]):
+                links.add(("condition", statement, bpe(*header[0])))
         if base is not None and stmt is not None:
             for attr in ("prev_named_sibling", "next_named_sibling"):
                 neighbor = getattr(stmt, attr)
                 while neighbor is not None and neighbor.type == "comment":
                     neighbor = getattr(neighbor, attr)
                 if neighbor is not None and neighbor.type in STATEMENT and not neighbor.has_error:
-                    links.add(("neighbor", anchor, bpe(neighbor.start_byte, neighbor.end_byte)))
+                    links.add(("neighbor", statement, bpe(neighbor.start_byte, neighbor.end_byte)))
         for name, use in names.items():
             cursor, assignment = scope, None
             while cursor is not None:
                 decls = definitions.get((cursor, name, "declaration"), ())
                 writes = definitions.get((cursor, name, "assignment"), ())
-                di = bisect_right(decls, (anchor[0], -1)) - 1
-                wi = bisect_right(writes, (anchor[0], -1)) - 1
+                di = bisect_right(decls, (statement[0], -1)) - 1
+                wi = bisect_right(writes, (statement[0], -1)) - 1
                 if assignment is None and wi >= 0 and writes[wi][1] <= use:
                     assignment = writes[wi]
                 if di >= 0 and decls[di][1] <= use:
                     decl = decls[di]
-                    links.add(("declaration", anchor, decl))
+                    links.add(("declaration", statement, decl))
                     if assignment is not None and assignment[0] < decl[1]:
                         assignment = None
                     break
                 cursor = scopes[cursor][0]
             if assignment is not None:
-                links.add(("assignment", anchor, assignment))
+                links.add(("assignment", statement, assignment))
 
     return {link for link in links if link[2][0] < link[2][1] and
             (base is None or not contains(link[2], base))}, root.has_error
 
 
-def prefer_context(base, links, *, budget=BUDGET):
+def prefer_context(base, links, *, budget=BUDGET, statement_scores=None):
+    """Rank deduplicated context spans once against the initial selected code."""
     weights = Counter()
-    for kind, _, span in links:
-        weights[span] += RELATED_WEIGHTS[kind]
+    for kind, statement, span in links:
+        weight = RELATED_WEIGHTS[kind]
+        weights[span] += weight if statement_scores is None else statement_scores[statement]*weight
     spans = merge(base)
     size = occupied(spans)
     priced = [(occupied(merge([*spans, span]))-size, span) for span in weights]
@@ -302,11 +304,11 @@ def base_windows(boundaries):
 def link_retention(links, spans):
     linked = {kind: [0, 0, 0] for kind in RELATED_WEIGHTS}
     retained = merge(spans)
-    for kind, anchor, context in links:
+    for kind, statement, context in links:
         context_kept = contains(context, retained)
         linked[kind][0] += 1
         linked[kind][1] += int(context_kept)
-        linked[kind][2] += int(context_kept and contains(anchor, retained))
+        linked[kind][2] += int(context_kept and contains(statement, retained))
     return linked
 
 

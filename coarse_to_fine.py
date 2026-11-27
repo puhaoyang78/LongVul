@@ -39,6 +39,7 @@ WEIGHTS = ROOT / "checkpoints" / RESULTS.name
 ARCHIVE = ROOT / "results" / "coarse_to_fine_512"
 ARCHIVE_WEIGHTS = ROOT / "checkpoints" / ARCHIVE.name
 VARIABLE_CACHE = ROOT / "checkpoints" / "longvul_adaptive_512" / "blocks"
+REPAIR_INDEX_WEIGHT = 1.
 BUDGETS = (0,64,96,128)
 METHODS = ("center_context","statement_context","global_fusion","weighted_fusion","selected_fusion","matched_uniform")
 
@@ -186,6 +187,43 @@ def fitted(config, selected, history, nvalid):
                 one_class_valid_epochs=sum(row["validation"]["tp"]+row["validation"]["fp"] in (0,nvalid) for row in history))
 
 
+def fit_repair_indexer(train,valid,seed,method,root,weights,*,matching="block"):
+    width = train.vectors.shape[-1]
+    if (root/method/"fit.json").is_file():
+        return read_json(root/method/"fit.json")
+    labels = []
+    for source,ends,edits in zip(train.sources,train.ends,paired_annotations(train.sources),strict=True):
+        mass = repair_block_mass(source,ends,edits,(*EDIT_TYPES,*GAP_TYPES))
+        labels.append(mass/mass.sum().clamp_min(1))
+    for name,supervision,weight,token_match in (
+        ("global","global",0.,"block"), (method,"joint",REPAIR_INDEX_WEIGHT,matching)
+    ):
+        area,location = root/name,weights/name
+        if (area/"fit.json").is_file():
+            continue
+        use_tokens = token_match!="block"
+        validation = BlockData(valid.rows,valid.ends,valid.vectors,token_features=valid.token_features if use_tokens else None)
+        data = BlockData(train.rows,train.ends,train.vectors,labels if weight else None,
+                         token_features=train.token_features if use_tokens else None)
+        config = dict(run_config(name,seed),stage="coarse",block_layout="fixed32",
+                      matching=token_match,supervision=supervision,repair_weight=weight,
+                      precision="FP32 on cached FP16 states",initialization="fresh seeded weights",
+                      loss="function BCE + labeled function mean KL" if weight else "function BCE")
+        set_seed(seed)
+        model = CoarseClassifier(width,supervision,weight,matching=token_match)
+        if weight:
+            config["initialization"] = "fresh Q/K; auxiliary head from newly trained same-seed global fit"
+            update = model.load_state_dict(torch.load(weights/"global"/"best.pt",weights_only=True,map_location="cpu"),
+                                           strict=False)
+            if set(update.missing_keys)!={"indexer.query.weight","indexer.key.weight"} or update.unexpected_keys:
+                raise ValueError("Newly trained auxiliary head did not match the joint model")
+        best,history = fit_classifier(model.cuda(),data,validation,location,area,config,collator=collate_blocks)
+        write_json(area/"fit.json",fitted(config,best,history,len(validation)))
+        del model
+        gc.collect()
+    return read_json(root/method/"fit.json")
+
+
 def fit_indexer(tokenizer,seed):
     root = seed_root(RESULTS,seed)/"statement_index"
     if (root/"joint"/"fit.json").is_file():
@@ -228,14 +266,15 @@ def load_index(seed,aligned):
     return model.cuda().eval().requires_grad_(False)
 
 
-def fine_data(split,features,ranks,tokenizer,budget,*,uniform=False):
+def fine_data(split,features,ranks,tokenizer,budget,*,uniform=False,importance_guided=False):
     started = perf_counter()
     parser = source_parser() if budget and not uniform else None
     blank = torch.full((REGIONS,4),-1,dtype=torch.int32)
 
     def examples():
         for source,ends,f,scores in zip(split.sources,split.ends,features,ranks,strict=True):
-            layout = uniform_layout(source) if uniform else retrieve(scores,source,ends,budget,parser)
+            layout = uniform_layout(source) if uniform else retrieve(scores,source,ends,budget,parser,
+                                                                     importance_guided=importance_guided)
             fixed,n = pack_fixed(source.raw_ids,source.keep,layout.spans,tokenizer)
             if n != min(MAX_LENGTH,len(source.ids)+2):
                 raise ValueError("Fine input does not fill the historical positional budget")
@@ -318,7 +357,7 @@ def layout_row(source,layout,syntax,edits,control):
     units,links,error = syntax
     body = lengths(spans)
     reserved = merge([*centers,*layout.context])
-    anchors = [u for u in units if intersects(u,centers)]
+    selected_statements = [u for u in units if intersects(u,centers)]
     touched = [u for u in units if intersects(u,spans)]
     actual = merge(x for kind in EDIT_TYPES for x in edits[kind])
     row = dict(body_bpe=body,center_bpe=lengths(centers),context_bpe=lengths(layout.context),fill_bpe=lengths(layout.fill),
@@ -330,19 +369,19 @@ def layout_row(source,layout,syntax,edits,control):
                center_edit_bpe=overlap_bpe(raw_runs(source.keep,centers),actual),
                context_edit_bpe=overlap_bpe(raw_runs(source.keep,layout.context),actual),
                fill_edit_bpe=overlap_bpe(raw_runs(source.keep,layout.fill),actual),
-               anchored_statements=len(anchors),complete_anchor_statements=sum(contains(u,spans) for u in anchors),
+               selected_statements=len(selected_statements),complete_selected_statements=sum(contains(u,spans) for u in selected_statements),
                touched_statements=len(touched),complete_statements=sum(contains(u,spans) for u in touched),
-               parse_error=error,common_anchor_links=0,common_anchor_context=0,common_anchor_control_context=0)
+               parse_error=error,shared_statement_links=0,shared_statement_context_count=0,shared_statement_control_context_count=0)
     if row["center_bpe"]+row["context_bpe"]+row["fill_bpe"]+row["passthrough_bpe"]!=body:
         raise ValueError("Budget attribution does not partition fine source tokens")
-    for kind,anchor,relation in links:
-        if kind not in CONTEXT_TYPES or occupied(merge([anchor,relation]))>BUDGET:
+    for kind,statement,relation in links:
+        if kind not in CONTEXT_TYPES or occupied(merge([statement,relation]))>BUDGET:
             continue
-        if (contains(anchor,spans) and contains(anchor,control.spans) and
-                (intersects(anchor,centers) or intersects(anchor,control.centers))):
-            row["common_anchor_links"] += 1
-            row["common_anchor_context"] += int(contains(relation,spans))
-            row["common_anchor_control_context"] += int(contains(relation,control.spans))
+        if (contains(statement,spans) and contains(statement,control.spans) and
+                (intersects(statement,centers) or intersects(statement,control.centers))):
+            row["shared_statement_links"] += 1
+            row["shared_statement_context_count"] += int(contains(relation,spans))
+            row["shared_statement_control_context_count"] += int(contains(relation,control.spans))
     return row
 
 
@@ -359,7 +398,7 @@ def selection_reports(records,edits,sizes):
             s["identical_complete_pair_inputs"] = sum(r["identical_fine_pair_input"] and
                                                        r["identical_global_pair_input"] for r in pairs)
             s["complete_pair_collision_rate"] = s["identical_complete_pair_inputs"]/len(pairs) if pairs else None
-        if "anchored_statements" in selected[0]:
+        if "selected_statements" in selected[0]:
             # Layout means and relation diagnostics exclude fully encoded short inputs.
             packed = [r for r in selected if r["compacted_bpe"]>BUDGET]
             s["functions_requiring_selection"] = len(packed)
@@ -372,10 +411,10 @@ def selection_reports(records,edits,sizes):
                 for key in ("center_edit_bpe","context_edit_bpe","fill_edit_bpe"):
                     s[key] = sum(r[key] for r in packed)
                 for prefix,num,den in (
-                        ("anchor_statement_complete","complete_anchor_statements","anchored_statements"),
+                        ("selected_statement_complete","complete_selected_statements","selected_statements"),
                         ("touched_statement_complete","complete_statements","touched_statements"),
-                        ("same_anchor_context","common_anchor_context","common_anchor_links"),
-                        ("same_anchor_control_context","common_anchor_control_context","common_anchor_links")):
+                        ("shared_statement_context","shared_statement_context_count","shared_statement_links"),
+                        ("shared_statement_control_context","shared_statement_control_context_count","shared_statement_links")):
                     hits,total = sum(r[num] for r in packed),sum(r[den] for r in packed)
                     s[prefix] = dict(retained=hits,total=total,fraction=hits/total if total else None)
                 s["partial_parse_functions"] = sum(r["parse_error"] for r in packed)
@@ -465,17 +504,19 @@ def budget_trials(tokenizer):
                 write_json(path,result)
             view = result["unixcoder"]
             layout = view["layout"]["long"]
-            matched = layout["same_anchor_context"]["fraction"]-layout["same_anchor_control_context"]["fraction"]
+            context = layout.get("shared_statement_context",layout.get("same_anchor_context"))
+            control_context = layout.get("shared_statement_control_context",layout.get("same_anchor_control_context"))
+            matched = context["fraction"]-control_context["fraction"]
             choices[budget].append(dict(seed=seed,valid_mcc=view["groups"]["overall"]["mcc"],
                                         long_mcc=view["groups"]["long"]["mcc"],
                                         long_real_edit_retention=view["edit_retention"]["long"]["actual_edits"]["fraction"],
-                                        long_same_anchor_delta=matched))
+                                        long_shared_statement_context_delta=matched))
             print("Valid budget",seed,budget,choices[budget][-1],flush=True)
         del index,fine
         gc.collect()
     averages = {b:{k:mean(row[k] for row in values) for k in values[0] if k!="seed"}
                 for b,values in choices.items()}
-    weights = dict(valid_mcc=2,long_real_edit_retention=1,long_same_anchor_delta=1)
+    weights = dict(valid_mcc=2,long_real_edit_retention=1,long_shared_statement_context_delta=1)
     candidates = [b for b in BUDGETS if b]
     ranks = {b:sum(weight*(1+sum(averages[other][metric]>averages[b][metric] for other in candidates))
                    for metric,weight in weights.items()) for b in candidates}
@@ -550,7 +591,7 @@ def fit_fine(tokenizer,seed,method):
     return fit_frozen_fine(tokenizer,index,config,area,seed_root(WEIGHTS,seed)/record,uniform=uniform)
 
 
-def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None):
+def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=None,prepared=None):
     method,seed,fusion,context = (config[k] for k in ("method","seed","fusion","context_budget"))
     aligned = config["block_layout"] == "statement32"
     path = area/"metrics.json"
@@ -562,10 +603,15 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     if any(p.requires_grad for p in index.parameters()):
         raise ValueError("Fine training requires a frozen indexer")
     datasets, stages = {}, {}
+    importance_guided = config.get("context_priority") == "importance_guided"
     for name in ("train","valid"):
         split = cached[name] if cached is not None else load_split(name,tokenizer,aligned=aligned)
-        features,ranks,scoring = score_coarse(index,split,fusion)
-        data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform)
+        if prepared is None:
+            features,ranks,scoring = score_coarse(index,split,fusion)
+            data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,
+                                     importance_guided=importance_guided)
+        else:
+            data,ranks,scoring,seconds = prepared[name]
         stages[name] = dict(source_seconds=split.source_seconds,block_cache_read_seconds=split.cache_read_seconds,
                             index_scoring=scoring,retrieval_and_packing_seconds=seconds)
         if name=="train":
@@ -591,7 +637,7 @@ def fit_frozen_fine(tokenizer,index,config,area,weights,*,uniform=False,cached=N
     split = load_split("test",tokenizer,aligned=aligned,encoder=encoder,
                        token_features=index.indexer.matching != "block")
     features,ranks,scoring = score_coarse(index,split,fusion)
-    data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform)
+    data,seconds = fine_data(split,features,ranks,tokenizer,context,uniform=uniform,importance_guided=importance_guided)
     scores,fine = predict_fine(model,data)
     elapsed = perf_counter()-started
     del encoder
@@ -778,8 +824,12 @@ def summarize(tokenizer):
                 for field in layouts[0]:
                     if field.startswith("mean_") or field.endswith("_collision_rate"):
                         values[field] = seed_stats([layout[field] for layout in layouts])
-                    elif field in ("anchor_statement_complete","touched_statement_complete","same_anchor_context"):
-                        values[field] = seed_stats([layout[field]["fraction"] for layout in layouts])
+                for field,archive_field in (("selected_statement_complete","anchor_statement_complete"),
+                                            ("shared_statement_context","same_anchor_context"),
+                                            ("touched_statement_complete","touched_statement_complete")):
+                    retention = [layout.get(field,layout.get(archive_field)) for layout in layouts]
+                    if all(retention):
+                        values[field] = seed_stats([value["fraction"] for value in retention])
                 averages[method][kind][group] = values
     external = {name:baseline_report(ROOT/"results"/name,rows,codebert=codebert)
                 for name in ("stagedvulbert","sea","vulnscout")}

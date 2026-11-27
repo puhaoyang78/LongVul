@@ -22,7 +22,7 @@ class PredictedDiffTest(unittest.TestCase):
         self.source = character_source("int f() {\n" + "    x += y + z;\n"*70 + "}\n")
         self.scores = np.arange(len(self.source.regions), dtype=float)
 
-    def test_same_anchors_match_oracle_layout(self):
+    def test_same_regions_match_oracle_layout(self):
         chosen = prepare_example(self.source, self.scores, TOKENIZER, 4, BUDGET//2)
         edits = dict.fromkeys((*EDIT_TYPES, *GAP_TYPES), ())
         edits["replace"] = chosen["predicted_anchor_runs"]
@@ -31,13 +31,13 @@ class PredictedDiffTest(unittest.TestCase):
         self.assertEqual(original["oracle_anchor_runs"], chosen["predicted_anchor_runs"])
         self.assertTrue(torch.equal(original["fixed"], chosen["fixed"]))
 
-    def test_cap_preserves_uniform_space_and_actual_anchors(self):
+    def test_cap_preserves_uniform_space_and_predicted_regions(self):
         example = prepare_example(self.source, self.scores, TOKENIZER, 25, 127)
         self.assertLessEqual(example["predicted_anchor_positions"], 127)
         self.assertEqual(example["length"], 512)
         retained = set(example["fixed"][1, :512].tolist())
         self.assertTrue(all(i in retained for a, b in example["predicted_anchor_runs"] for i in range(a, b)))
-        with self.assertRaisesRegex(ValueError, "anchor policy"):
+        with self.assertRaisesRegex(ValueError, "region policy"):
             prepare_example(self.source, self.scores, TOKENIZER, 25, BUDGET)
 
     def test_source_only_input_and_short_passthrough(self):
