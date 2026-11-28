@@ -20,6 +20,17 @@ done
 "$PYTHON" -m diagnostics.budget_indexing
 ```
 
+从 `01e0479` 已有结果和辅助头检查点继续，可单独补跑 BCE + KL 适配对照。每个补充种子重新训练一次任务适配索引器，两种 Fusion 方式共享同一索引检查点。
+
+补齐两个种子后，Adapted Encoding 与 Adapted Index + Frozen Fusion 的三种子整体 Test MCC 分别为 **0.0947 ± 0.0220** 和 **0.1028 ± 0.0442**，原 LongVul 为 **0.1065 ± 0.0158**。两种适配共享的索引将 UniXcoder 长组修改 BPE 保留率从 48.12% 提高至 48.81%，完全遗漏率从 22.84% 升至 26.17%。Frozen Fusion 平均多用 5.64 秒完成全 Test 推理。[补充种子分析](results/budget_indexing_512/report.md#bce--kl-适配补充种子)
+
+```bash
+for seed in 1234 123456; do
+    "$PYTHON" budget_indexing.py run --seed "$seed" --methods adapted_encoding adapted_index_frozen_fusion
+done
+"$PYTHON" -m diagnostics.budget_indexing --adapted-seeds
+```
+
 ## 全局融合消融与匹配 Oracle
 
 补齐 Standard Fine-only 的三个种子。两种 Oracle 策略使用真实修复 Diff 构造 32 BPE 块分数，复用 Predicted 的中心优先检索、96 位置上下文预算、填充与 512 位置打包。Oracle 的 Train、Valid 和 Test 均读取真实修复配对，数据用于特权诊断。全局向量仍取当前函数的冻结表示。各新增分类器从原始预训练 UniXcoder 独立微调。[对照协议与机制结果](results/matched_oracle_512/report.md)

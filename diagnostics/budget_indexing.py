@@ -1,10 +1,11 @@
 """Compare budget-aware retrieval, unchanged controls, and the matched Oracle."""
+import argparse
 from bisect import bisect_left
 import json
 from statistics import median
 
 import coarse_to_fine as pipeline
-from budget_indexing import (ADAPTED_JOINT, BASE_METHODS, FUSION_DIAGNOSTICS, JOINT,
+from budget_indexing import (ADAPTED_CONTROLS, ADAPTED_JOINT, BASE_METHODS, FUSION_DIAGNOSTICS, JOINT,
                              JOINT_DIAGNOSTIC, RANKING, RESULTS, RETRIEVAL, winning_method)
 from coarse_retrieval import Layout
 from context_selection import merge
@@ -86,7 +87,7 @@ def gradient_medians(path):
     return result
 
 
-def summarize():
+def summarize(*,adapted_seeds=False):
     winner = winning_method()
     tokenizer = load_tokenizer("unixcoder",UNIX_BASE)
     split = pipeline.load_split("test",tokenizer)
@@ -104,7 +105,8 @@ def summarize():
             path = method_path(seed,method)
             saved = pipeline.read_predictions(path/"test.csv.gz",split.rows)
             baselines[method][str(seed)] = subset(read_json(path/"metrics.json"),archive_retrieval(split,edits,saved,sizes))
-        for method in methods if seed==SEED else (winner,):
+        requested = (winner,*ADAPTED_CONTROLS) if adapted_seeds else (winner,)
+        for method in methods if seed==SEED else dict.fromkeys(requested):
             path = root/method/"fine"
             run = subset(read_json(path/"metrics.json"))
             index_root = root/FUSION_DIAGNOSTICS.get(method,method)/"index"
@@ -131,24 +133,36 @@ def summarize():
                         all(a[k]==b[k] for k in ("train_loss","train_bce","train_repair_kl","validation"))
                         for a,b in zip(history,previous,strict=True))
     matched = {}
+    rows = {"valid":pipeline.prime_source_rows(pipeline.DATA,"valid"),"test":split.rows}
     for diagnosis,index in FUSION_DIAGNOSTICS.items():
         if diagnosis not in methods:
             continue
-        paths = [RESULTS/f"seed{SEED}"/m/"fine" for m in (index,diagnosis)]
-        matched[diagnosis] = []
-        for fold in ("valid","test"):
-            rows = split.rows if fold=="test" else pipeline.prime_source_rows(pipeline.DATA,fold)
-            first,second = (pipeline.read_predictions(path/f"{fold}.csv.gz",rows) for path in paths)
-            if any(any(a[k]!=b[k] for k in POSITIONS) for a,b in zip(first,second,strict=True)):
-                raise ValueError("Adapted and pretrained Fusion diagnostics used different fine retrieval")
-            matched[diagnosis].append(fold)
+        matched[diagnosis] = {}
+        seeds = SEEDS if adapted_seeds and diagnosis in ADAPTED_CONTROLS else (SEED,)
+        for seed in seeds:
+            root = RESULTS/f"seed{seed}"
+            paths = [root/m/"fine" for m in (index,diagnosis)]
+            index_fit = read_json(root/index/"index"/"fit.json")
+            configs = [read_json(path/"config.json") for path in paths]
+            if any(c["index_selected_epoch"]!=index_fit["selected_epoch"] for c in configs):
+                raise ValueError(f"Seed {seed}: fine classifiers do not use the shared index epoch for {index}")
+            matched[diagnosis][str(seed)] = []
+            for fold,members in rows.items():
+                first,second = (pipeline.read_predictions(path/f"{fold}.csv.gz",members) for path in paths)
+                if any(any(a[k]!=b[k] for k in POSITIONS) for a,b in zip(first,second,strict=True)):
+                    raise ValueError(f"Seed {seed} {fold}: Fusion diagnostics used different fine retrieval")
+                matched[diagnosis][str(seed)].append(fold)
     past = read_json(pipeline.ROOT/"results"/"matched_oracle_512"/"comparisons.json")
     write_json(RESULTS/"summary.json",dict(
         per_seed=(baselines | runs),paired_gaps=deltas,valid_checkpoint_choices=valid_choice,
         three_seed={m:aggregate(list(values.values())) for m,values in (baselines | runs).items() if len(values)==3},
-        external_baselines=past["external_baselines"],matched_fusion_layouts=matched,
+        external_baselines=past["external_baselines"],
+        matched_fusion_layouts={m:folds[str(SEED)] for m,folds in matched.items()},
+        **({"matched_fusion_layouts_by_seed":matched} if adapted_seeds else {}),
         selected=winner))
 
 
 if __name__=="__main__":
-    summarize()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--adapted-seeds",action="store_true",help="Include the matched BCE + KL controls for all seeds")
+    summarize(adapted_seeds=parser.parse_args().adapted_seeds)

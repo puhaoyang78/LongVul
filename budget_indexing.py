@@ -31,6 +31,7 @@ JOINT, ADAPTED_JOINT, JOINT_DIAGNOSTIC = "joint_supervision", "adapted_joint_sup
 BASE_METHODS = (RETRIEVAL,RANKING,ADAPTED,DIAGNOSTIC)
 METHODS = (*BASE_METHODS,JOINT,ADAPTED_JOINT,JOINT_DIAGNOSTIC)
 FUSION_DIAGNOSTICS = {DIAGNOSTIC:ADAPTED,JOINT_DIAGNOSTIC:ADAPTED_JOINT}
+ADAPTED_CONTROLS = (ADAPTED,DIAGNOSTIC)
 ADAPTIVE_METHODS = (ADAPTED,ADAPTED_JOINT)
 SUPERVISION = {RETRIEVAL:(1.,0.),RANKING:(0.,1.),JOINT:(1.,.1)}
 CONTEXT_BUDGET = 96
@@ -279,9 +280,10 @@ def run(seed,methods,tokenizer,*,splits=None):
         if index_method==ADAPTED:
             configs = [read_json(RESULTS/f"seed{SEED}"/label/"index"/"fit.json") for label in (RETRIEVAL,RANKING)]
             supervision = max(configs,key=lambda x:x["selected_retrieval"]["retention"])["config"]["method"]
-            write_json(RESULTS/"adaptation_policy.json",dict(seed=SEED,supervision=supervision,
-                       criterion="Valid original UniXcoder >510 actual edit BPE retrieval",
-                       valid_retention={r["config"]["method"]:r["selected_retrieval"]["retention"] for r in configs}))
+            if seed==SEED:
+                write_json(RESULTS/"adaptation_policy.json",dict(seed=SEED,supervision=supervision,
+                           criterion="Valid original UniXcoder >510 actual edit BPE retrieval",
+                           valid_retention={r["config"]["method"]:r["selected_retrieval"]["retention"] for r in configs}))
         else:
             supervision = JOINT if index_method==ADAPTED_JOINT else method
         fit_index(seed,index_method,supervision,splits,tokenizer)
@@ -400,11 +402,13 @@ def main():
             splits = load_training_splits(tokenizer)
             run(args.seed,BASE_METHODS,tokenizer,splits=splits)
             complete_joint(tokenizer,splits=splits)
+    elif tuple(args.methods or ())==ADAPTED_CONTROLS:
+        run(args.seed,ADAPTED_CONTROLS,tokenizer)
     else:
         complete_joint(tokenizer)
         winner = winning_method()
         if args.methods and args.methods!=[winner]:
-            parser.error("Supplemental seeds run the Valid-selected main method")
+            parser.error("Supplemental seeds run the Valid-selected main method or both adapted controls in order")
         run(args.seed,[winner],tokenizer)
 
 
